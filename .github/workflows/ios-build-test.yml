@@ -1,0 +1,31 @@
+name: iOS Build Test
+
+on:
+  push:
+    branches:
+      - ios-build-test
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    name: Build Afterflow for iOS (ARM64)
+    runs-on: macos-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build iOS mod
+        id: build
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          sdk: given
+          target: iOS
+
+      - name: Upload iOS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: afterflow-ios-build-test
+          path: ${{ steps.build.outputs.build-output }}/*.geode
+          if-no-files-found: error
