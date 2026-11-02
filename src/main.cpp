@@ -1450,13 +1450,13 @@ finally {
     }
 
     constexpr char const* VERSION_URL =
-        "https://raw.githubusercontent.com/afterflow-gd/afterflow/refs/heads/main/version.txt";
+        "https://raw.githubusercontent.com/candyzp/afterflow/refs/heads/main/version.txt";
     constexpr char const* RELEASE_URL_PREFIX =
-        "https://github.com/afterflow-gd/afterflow/releases/tag/";
+        "https://github.com/candyzp/afterflow/releases/tag/";
     // always resolves to the newest published package, so the auto-updater
     // does not have to guess the release tag naming scheme
     constexpr char const* UPDATE_ASSET_URL =
-        "https://github.com/afterflow-gd/afterflow/releases/latest/download/afterflow.prsevend.geode";
+        "https://github.com/candyzp/afterflow/releases/latest/download/afterflow.prsevend.geode";
 
     std::string cleanVersion(std::string versionText) {
         auto isWhitespace = [](char character) {
@@ -7098,17 +7098,21 @@ $on_mod(Loaded) {
     if (!isMobileHost()) {
         startCycleWatcher();
     }
-    setupKeybinds();
+    // These settings are desktop-only in mod.json. Mobile uses the pause-menu
+    // launcher (and optional floating launcher) instead of keyboard bindings.
+    if (!isMobileHost()) {
+        setupKeybinds();
+        listenForSettingChanges<bool>("terminal-enabled", [](bool enabled) {
+            writeTerminalFlags();
+            if (!enabled) {
+                closeTerminal();
+            }
+        });
+    }
     static auto sceneListener = SceneEvent().listen([](CCScene* scene) {
         attachAfterflowOverlay(scene);
     });
     (void)sceneListener;
-    listenForSettingChanges<bool>("terminal-enabled", [](bool enabled) {
-        writeTerminalFlags();
-        if (!enabled) {
-            closeTerminal();
-        }
-    });
     static auto primaryColorListener = listenForSettingChanges<ccColor3B>("ui-primary-color", [](ccColor3B) {
         if (auto* overlay = activeAfterflowOverlay()) {
             overlay->rebuildDeck();
@@ -7519,9 +7523,15 @@ class $modify(BufPlayerObject, PlayerObject) {
         if (!ghostEffect()) PlayerObject::runBallRotation2();
     }
 
+#if !defined(GEODE_IS_IOS)
     void runNormalRotation(bool isNotNormalMode, float speedValue) {
         if (!ghostEffect()) PlayerObject::runNormalRotation(isNotNormalMode, speedValue);
     }
+#else
+    // iOS 2.2081: this visual hook's Geode base trampoline can recurse back
+    // into itself. Leave native player rotation unhooked on iOS; prediction,
+    // buffering, orb simulation, and all other hooks remain enabled.
+#endif
 
     void toggleGhostEffect(GhostType ghostType) {
         if (!ghostEffect()) PlayerObject::toggleGhostEffect(ghostType);

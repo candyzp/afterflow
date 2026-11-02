@@ -1,5 +1,10 @@
 # v2.4.1
 
+- **iOS stability**: leave the recursive `PlayerObject::runNormalRotation` visual hook native on iOS 2.2081; the predictive input and simulation hooks remain enabled.
+- **iOS settings**: skip desktop-only keybind and terminal listeners on mobile; the pause-menu launcher is the mobile entry point.
+- **iOS build**: apply the Geode 5.11.2 FMOD declarations workaround to generated bindings and build iOS in the main CI matrix.
+- **fork updater**: version checks and update downloads now resolve against `candyzp/afterflow`, not the upstream parent.
+
 - **mobile pause menu button**: android and ios now get an AF button in the pause menu, directly under the settings button and the same size as it. tap it to open the control panel.
 - the floating draggable af button is now off by default on mobile; turn it back on with the new "floating af button" setting.
 - keybind and terminal settings are now windows/mac only.
