@@ -12,7 +12,7 @@ if (APPLE)
 endif()
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
-project(Afterflow VERSION 2.4.1)
+project(Afterflow VERSION 2.4.2)
 
 # Add all source files inside src (recursively)
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
@@ -37,9 +37,9 @@ add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
 # Set up dependencies, resources, and link Geode.
 setup_geode_mod(${PROJECT_NAME})
 
-// iOS compatibility for the prebuilt Geode 5.11.2 Codegen:
-// GeneratedSource.cpp can reference FMOD C API types without including
-// their declarations. Force-include the Geode FMOD header for bindings only.
+# iOS compatibility for the prebuilt Geode 5.11.2 Codegen:
+# GeneratedSource.cpp can reference FMOD C API types without including
+# their declarations. Force-include the Geode FMOD header for bindings only.
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS" OR IOS)
     if (TARGET GeodeBindings)
         target_compile_options(GeodeBindings PRIVATE -include Geode/fmod/fmod.hpp)

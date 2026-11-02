@@ -1,3 +1,8 @@
+# v2.4.2
+
+- [build] fix CMake comment syntax in the iOS Geode 5.11.2 FMOD bindings workaround; the previous commit failed during CMake parsing before compilation.
+- [build] bump package version so this hotfix installs cleanly over earlier test builds.
+
 # v2.4.1
 
 - **iOS stability**: leave the recursive `PlayerObject::runNormalRotation` visual hook native on iOS 2.2081; the predictive input and simulation hooks remain enabled.
