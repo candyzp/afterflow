@@ -3474,6 +3474,7 @@ finally {
         float m_tutAlpha = 0.f;
         float m_tutCursorVis = 0.f;
         float m_tutProgShown = 0.f;
+        bool m_tutProgressNeedsRedraw = false;
         float m_tutRippleT = -1.f;
         float m_tutPhaseTime = 0.f;
         int m_tutPhase = 2; // 0 flying, 1 tapping, 2 settled
@@ -5064,6 +5065,7 @@ finally {
         m_tutCard->addChild(bg, 1);
 
         m_tutProgress = makeDrawNode();
+        m_tutProgressNeedsRedraw = true;
         m_tutCard->addChild(m_tutProgress, 2);
 
         auto popIn = [](CCNode* node, float delay, float dx, float dy) {
@@ -5299,20 +5301,26 @@ finally {
 
         // ---- progress pills ----
         if (m_tutProgress) {
+            float const previousProgress = m_tutProgShown;
             m_tutProgShown = ease(m_tutProgShown, static_cast<float>(std::max(m_tutorialStep, 0)), 9.f);
-            m_tutProgress->clear();
-            float x = 26.f;
-            float y = m_tutCardH - 22.f;
-            for (int index = 0; index < m_tutTotal; ++index) {
-                float nearness = std::clamp(1.f - std::abs(static_cast<float>(index) - m_tutProgShown), 0.f, 1.f);
-                float width = 10.f + 22.f * nearness;
-                bool reached = static_cast<float>(index) <= m_tutProgShown + 0.5f;
-                drawCurvedRect(
-                    m_tutProgress, CCRect(x, y - 2.5f, width, 5.f), 2.5f,
-                    reached ? color4(accentColor(), 235) : color4(255, 255, 255, 40),
-                    color4(0, 0, 0, 0), 0.f
-                );
-                x += width + 5.f;
+            // The pill geometry only depends on the interpolated progress value.
+            // Keep the existing draw data once that value stops changing.
+            if (m_tutProgressNeedsRedraw || m_tutProgShown != previousProgress) {
+                m_tutProgressNeedsRedraw = false;
+                m_tutProgress->clear();
+                float x = 26.f;
+                float y = m_tutCardH - 22.f;
+                for (int index = 0; index < m_tutTotal; ++index) {
+                    float nearness = std::clamp(1.f - std::abs(static_cast<float>(index) - m_tutProgShown), 0.f, 1.f);
+                    float width = 10.f + 22.f * nearness;
+                    bool reached = static_cast<float>(index) <= m_tutProgShown + 0.5f;
+                    drawCurvedRect(
+                        m_tutProgress, CCRect(x, y - 2.5f, width, 5.f), 2.5f,
+                        reached ? color4(accentColor(), 235) : color4(255, 255, 255, 40),
+                        color4(0, 0, 0, 0), 0.f
+                    );
+                    x += width + 5.f;
+                }
             }
         }
     }
