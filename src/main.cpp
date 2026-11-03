@@ -2593,6 +2593,8 @@ finally {
     constexpr float COPY_Y = LOG_HEADER_Y - 16.f;
     constexpr float COPY_WIDTH = 74.f;
     constexpr float COPY_HEIGHT = 32.f;
+    constexpr float PREDICTION_STATS_WIDTH = 64.f;
+    constexpr float PREDICTION_STATS_X = COPY_X - 8.f - PREDICTION_STATS_WIDTH;
 
     constexpr float DISMISS_X = CONTENT_RIGHT - 30.f;
     constexpr float DISMISS_Y = HEADER_Y - 15.f;
@@ -2908,6 +2910,10 @@ finally {
     // small credits button, pinned to the top right of the settings card
     CCRect creditsRect() {
         return CCRect(CONTENT_RIGHT - 20.f - 62.f, LOG_HEADER_Y - 12.f, 62.f, 24.f);
+    }
+
+    CCRect predictionStatsRect() {
+        return CCRect(PREDICTION_STATS_X, COPY_Y, PREDICTION_STATS_WIDTH, COPY_HEIGHT);
     }
 
     CCRect configButtonRect(int index) {
