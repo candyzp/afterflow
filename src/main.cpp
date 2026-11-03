@@ -449,6 +449,60 @@ namespace {
         int closeSampleTick = -1;
     };
 
+    // Simulation runs many candidate timelines for one click. These sets are
+    // cleared between timelines, so a normal unordered_set repeatedly frees
+    // and reallocates nodes for the same level objects. Epochs keep those nodes
+    // alive for the level and make per-simulation clear O(1).
+    class ObjectEpochSet {
+        std::unordered_map<GameObject*, std::uint32_t> m_epochs;
+        std::uint32_t m_epoch = 1;
+        size_t m_activeCount = 0;
+
+    public:
+        bool contains(GameObject* object) const {
+            auto found = m_epochs.find(object);
+            return found != m_epochs.end() && found->second == m_epoch;
+        }
+
+        void insert(GameObject* object) {
+            if (!object) {
+                return;
+            }
+            auto found = m_epochs.find(object);
+            if (found == m_epochs.end()) {
+                m_epochs.emplace(object, m_epoch);
+                ++m_activeCount;
+            }
+            else if (found->second != m_epoch) {
+                found->second = m_epoch;
+                ++m_activeCount;
+            }
+        }
+
+        void clear() {
+            ++m_epoch;
+            if (m_epoch == 0) {
+                m_epochs.clear();
+                m_epoch = 1;
+            }
+            m_activeCount = 0;
+        }
+
+        void reset() {
+            m_epochs.clear();
+            m_epoch = 1;
+            m_activeCount = 0;
+        }
+
+        void reserve(size_t count) {
+            m_epochs.reserve(count);
+        }
+
+        bool empty() const {
+            return m_activeCount == 0;
+        }
+    };
+
     struct HoldStats {
         int holdSamples[HOLD_SAMPLE_COUNT] = {};
         int sampleCount = 0;
@@ -484,7 +538,7 @@ namespace {
         double userBudgetMilliseconds = 6.0;
         bool automaticBudget = true;
         int keyStates[6] = { 0, 0, 0, 0, 0, 0 };
-        std::unordered_set<GameObject*> simulationDisabledObjects;
+        ObjectEpochSet simulationDisabledObjects;
 
         bool isSimulating = false;
         bool isInjecting = false;
@@ -538,7 +592,7 @@ namespace {
         bool ignoreTouchingObjects = true;
         bool hasRealRectangle = false;
         CCRect realRectanglePlayer1, realRectanglePlayer2;
-        std::unordered_set<GameObject*> harmlessObjects;
+        ObjectEpochSet harmlessObjects;
         int baseEscapeTicks = -1;
         int baseCrashTicks = -1;
 
@@ -570,7 +624,7 @@ namespace {
         float tickDeltaX = 0.f;
         bool dashAutoReleaseEnabled = false;
         bool autoDashEnabled = false;
-        std::unordered_set<GameObject*> usedOrbs;
+        ObjectEpochSet usedOrbs;
         bool moreTimeEnabled = true;
         bool ballSmartEnabled = true;
         bool swingSmartEnabled = true;
@@ -613,9 +667,26 @@ namespace {
         CCDrawNode* pathDrawNode = nullptr;
         int pathHoldUntilTick = 0;
 
-        std::unordered_set<GameObject*> simulationUsedObjects;
+        ObjectEpochSet simulationUsedObjects;
         std::vector<ObjSnapshot> objectSnapshots;
     } state;
+
+    void resetSimulationObjectCaches() {
+        state.simulationDisabledObjects.reset();
+        state.harmlessObjects.reset();
+        state.usedOrbs.reset();
+        state.simulationUsedObjects.reset();
+
+        // Warm the hash tables outside the live prediction/touch path.
+        state.simulationDisabledObjects.reserve(128);
+        state.harmlessObjects.reserve(128);
+        state.usedOrbs.reserve(64);
+        state.simulationUsedObjects.reserve(128);
+        state.objectSnapshots.clear();
+        state.probeOrbCandidates.clear();
+        state.objectSnapshots.reserve(64);
+        state.probeOrbCandidates.reserve(16);
+    }
 
     HoldStats tapHoldHistory, robotHoldHistory;
     int currentTick = 0;
@@ -7474,6 +7545,7 @@ class $modify(BufPlayLayer, PlayLayer) {
             return false;
         }
         dropGhosts();
+        resetSimulationObjectCaches();
         clearRecentLog();
         resetLevelPredictionCache();
         readSettings();
@@ -7500,6 +7572,7 @@ class $modify(BufPlayLayer, PlayLayer) {
         resetPending();
         dropGhosts();
         PlayLayer::onQuit();
+        resetSimulationObjectCaches();
         resetLevelPredictionCache();
         clearRecentLog();
     }
