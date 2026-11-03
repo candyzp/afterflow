@@ -99,6 +99,18 @@ The original visual state is still computed from the same value. When that value
 - The local container could not clone GitHub because network name resolution was unavailable. A local Geode SDK/build environment was not available.
 - The commit status endpoint reported no status checks. The available workflow-run query is limited to pull-request-triggered runs and returned none; it does not establish whether other event types ran. The GitHub integration available here did not expose a workflow-dispatch action, so no build was run. Compilation and runtime behavior remain unverified.
 
+## Second-pass correctness and execution-context audit
+
+- `openPanel()` calls `pauseForPanel()` before scheduling `animTick()`. `closePanel()` unschedules the animation loop and resumes the game. `animTick()` also returns when `m_isOpen` is false.
+- Therefore, the selected tutorial progress optimization runs only during the open-panel tutorial, while the game is paused. It should be understood as reducing avoidable UI-side CPU geometry work, not as an optimization that will raise normal gameplay FPS.
+- The tutorial spotlight remains dynamic because its pulse changes each frame; its shade and outline rebuilding was intentionally left intact.
+- The cursor geometry is constructed once per tutorial layer and then animated by transforms; it was not changed.
+- The tab indicator is redrawn while its interpolation moves and stops being redrawn when settled; it was not changed.
+- The tutorial progress node is recreated on each card build and marked dirty immediately. UI primary/secondary color setting listeners rebuild the deck, so a color change also creates a fresh progress node and triggers a redraw. The cache therefore does not retain stale colors through the supported theme-setting path.
+- Static body comparison against the base `main` source confirmed identical implementations for `simulate()`, `simulateOrbs()`, `sendButton()`, `pressGhost()`, `handleButton()`, `playerTouchedRing()`, `runNormalRotation()`, `drawCurvedRect()`, `makeDrawNode()`, and `drawTabIndicator()`.
+- A second redundant operation was noted: `m_tutFx->clear()` runs even when no ripple is active. It was deliberately left unchanged because the task requested one focused implementation change, and its expected benefit is smaller than skipping the progress-pill polygon regeneration.
+- No second agent branch or newly published Agent B message was visible on the latest branch listing. The GitHub coordination search still contained no agent messages.
+
 ## Remaining questions for other agents
 
 1. Does another agent have unpublished local changes or a local claim on `src/main.cpp`?
