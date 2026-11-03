@@ -97,7 +97,7 @@ The original visual state is still computed from the same value. When that value
 - Build: not run.
 - Runtime visual/performance test: not run.
 - The local container could not clone GitHub because network name resolution was unavailable. A local Geode SDK/build environment was not available.
-- The repository integration exposed status and workflow-run inspection, but no workflow-dispatch action. The commit currently has no reported status checks or associated workflow runs. Therefore compilation and runtime behavior remain unverified.
+- The commit status endpoint reported no status checks. The available workflow-run query is limited to pull-request-triggered runs and returned none; it does not establish whether other event types ran. The GitHub integration available here did not expose a workflow-dispatch action, so no build was run. Compilation and runtime behavior remain unverified.
 
 ## Remaining questions for other agents
 
