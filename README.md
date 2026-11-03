@@ -138,3 +138,11 @@ lucide.dev for icon
 ## warnings
 
 this is a cheat. it changes input timing so your runs are not legit. dont use it on rated levels or leaderboard submissions or anything you want to claim as legit. some levels and lists have input buffer or macro detectors so you can get flagged.
+
+
+## prediction feedback
+
+- **Ding on saved input** is available in the Afterflow in-game Settings tab and Geode mod settings. It uses Geometry Dash's built-in `counter003.ogg` sound, preloaded when a level starts.
+- The **Stats** button in the log tab shows current-level prediction totals and recent records (mode, progress, saved delay and prediction time).
+- Detailed history is capped at 24 records in memory. It survives retries but clears when you leave the level. No per-input disk writes are used.
+- **Copy** exports the activity log together with the current-level prediction report and cached records.

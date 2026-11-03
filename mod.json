@@ -8,7 +8,7 @@
   },
   "id": "afterflow.prsevend",
   "name": "Afterflow",
-  "version": "2.4.2",
+  "version": "2.4.3",
   "developer": "prsevend",
   "description": "a predictive input cheat that fixes your early clicks and makes them accurate, with customizable UI colors and a polished control panel.",
   "tags": [
@@ -133,6 +133,16 @@
       "min": 0.8,
       "max": 1.5,
       "step": 0.05
+    },
+    "prediction-audio-title": {
+      "type": "title",
+      "name": "prediction audio"
+    },
+    "prediction-beep": {
+      "type": "bool",
+      "name": "ding on saved input",
+      "description": "Play the same short counter ding as Predictive Input Bluffer whenever Afterflow successfully delays an input. Uses Geometry Dash's built-in counter003 sound.",
+      "default": true
     },
     "mobile-title": {
       "type": "title",

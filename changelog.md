@@ -1,3 +1,10 @@
+# v2.4.3
+
+- **prediction ding**: optional in-panel and Geode setting for the same built-in `counter003.ogg` sound used by Predictive Input Bluffer; preloaded at level start to avoid first-use hitching.
+- **level prediction cache**: records saves, safe inputs, no-save outcomes, orb rejects and late-crash skips with mode, progress, delay and prediction time.
+- **prediction stats**: a compact Stats button in the log tab opens a readable summary; Copy includes the full bounded history.
+- **memory**: the cache is fixed at 24 detailed entries, stored in RAM only, retained across retries and cleared when you leave the level. No per-input file writes.
+
 # v2.4.2
 
 - [build] fix CMake comment syntax in the iOS Geode 5.11.2 FMOD bindings workaround; the previous commit failed during CMake parsing before compilation.

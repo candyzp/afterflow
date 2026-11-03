@@ -65,6 +65,198 @@ namespace {
     std::mutex g_recentLogMutex;
     std::deque<std::string> g_recentLog;
 
+    constexpr size_t PREDICTION_HISTORY_CAPACITY = 24;
+
+    enum class PredictionMode : std::uint8_t {
+        Cube, Wave, Ship, Ball, Ufo, Robot, Spider, Swing, Dual
+    };
+
+    enum class PredictionOutcome : std::uint8_t {
+        Saved, OrbAligned, Safe, NoSave, OrbRejected, LateCrash
+    };
+
+    struct PredictionRecord {
+        std::uint64_t sequence = 0;
+        int percent = 0;
+        int baseTicks = -1;
+        int delayTicks = 0;
+        int maxDelayTicks = 0;
+        double elapsedMilliseconds = 0.0;
+        bool isDown = false;
+        PredictionMode mode = PredictionMode::Cube;
+        PredictionOutcome outcome = PredictionOutcome::Safe;
+    };
+
+    struct LevelPredictionCache {
+        std::uint64_t predictions = 0;
+        std::uint64_t presses = 0;
+        std::uint64_t releases = 0;
+        std::uint64_t saves = 0;
+        std::uint64_t safeInputs = 0;
+        std::uint64_t noSaves = 0;
+        std::uint64_t orbRejections = 0;
+        std::uint64_t lateCrashSkips = 0;
+        std::uint64_t totalSavedTicks = 0;
+        double totalPredictionMilliseconds = 0.0;
+        double peakPredictionMilliseconds = 0.0;
+        PredictionRecord history[PREDICTION_HISTORY_CAPACITY] = {};
+        size_t historyCount = 0;
+        size_t nextHistoryIndex = 0;
+    };
+
+    LevelPredictionCache g_levelPredictionCache;
+
+    void playPredictionBeep();
+
+    void resetLevelPredictionCache() {
+        g_levelPredictionCache = {};
+    }
+
+    void clearRecentLog() {
+        std::lock_guard<std::mutex> lock(g_recentLogMutex);
+        g_recentLog.clear();
+    }
+
+    PredictionMode predictionModeFor(PlayerObject* player1, PlayerObject* player2) {
+        if (player2) { return PredictionMode::Dual; }
+        if (!player1) { return PredictionMode::Cube; }
+        if (player1->m_isDart) { return PredictionMode::Wave; }
+        if (player1->m_isShip) { return PredictionMode::Ship; }
+        if (player1->m_isBall) { return PredictionMode::Ball; }
+        if (player1->m_isBird) { return PredictionMode::Ufo; }
+        if (player1->m_isRobot) { return PredictionMode::Robot; }
+        if (player1->m_isSpider) { return PredictionMode::Spider; }
+        if (player1->m_isSwing) { return PredictionMode::Swing; }
+        return PredictionMode::Cube;
+    }
+
+    char const* predictionModeName(PredictionMode mode) {
+        switch (mode) {
+            case PredictionMode::Wave: return "wave";
+            case PredictionMode::Ship: return "ship";
+            case PredictionMode::Ball: return "ball";
+            case PredictionMode::Ufo: return "ufo";
+            case PredictionMode::Robot: return "robot";
+            case PredictionMode::Spider: return "spider";
+            case PredictionMode::Swing: return "swing";
+            case PredictionMode::Dual: return "dual";
+            default: return "cube";
+        }
+    }
+
+    char const* predictionOutcomeName(PredictionOutcome outcome) {
+        switch (outcome) {
+            case PredictionOutcome::Saved: return "SAVE";
+            case PredictionOutcome::OrbAligned: return "ORB SAVE";
+            case PredictionOutcome::Safe: return "SAFE";
+            case PredictionOutcome::NoSave: return "NO SAVE";
+            case PredictionOutcome::OrbRejected: return "ORB REJECT";
+            case PredictionOutcome::LateCrash: return "LATE SKIP";
+            default: return "UNKNOWN";
+        }
+    }
+
+    void recordLevelPrediction(
+        bool isDown,
+        PredictionMode mode,
+        PredictionOutcome outcome,
+        int percent,
+        int baseTicks,
+        int delayTicks,
+        int maxDelayTicks,
+        double elapsedMilliseconds
+    ) {
+        auto& cache = g_levelPredictionCache;
+        ++cache.predictions;
+        if (isDown) { ++cache.presses; }
+        else { ++cache.releases; }
+
+        elapsedMilliseconds = std::max(0.0, elapsedMilliseconds);
+        cache.totalPredictionMilliseconds += elapsedMilliseconds;
+        cache.peakPredictionMilliseconds = std::max(cache.peakPredictionMilliseconds, elapsedMilliseconds);
+
+        switch (outcome) {
+            case PredictionOutcome::Saved:
+            case PredictionOutcome::OrbAligned:
+                ++cache.saves;
+                cache.totalSavedTicks += static_cast<std::uint64_t>(std::max(0, delayTicks));
+                playPredictionBeep();
+                break;
+            case PredictionOutcome::Safe:
+                ++cache.safeInputs;
+                break;
+            case PredictionOutcome::NoSave:
+                ++cache.noSaves;
+                break;
+            case PredictionOutcome::OrbRejected:
+                ++cache.orbRejections;
+                break;
+            case PredictionOutcome::LateCrash:
+                ++cache.lateCrashSkips;
+                break;
+        }
+
+        auto& record = cache.history[cache.nextHistoryIndex];
+        record.sequence = cache.predictions;
+        record.percent = std::clamp(percent, 0, 100);
+        record.baseTicks = baseTicks;
+        record.delayTicks = std::max(0, delayTicks);
+        record.maxDelayTicks = std::max(0, maxDelayTicks);
+        record.elapsedMilliseconds = elapsedMilliseconds;
+        record.isDown = isDown;
+        record.mode = mode;
+        record.outcome = outcome;
+        cache.nextHistoryIndex = (cache.nextHistoryIndex + 1) % PREDICTION_HISTORY_CAPACITY;
+        cache.historyCount = std::min(cache.historyCount + 1, PREDICTION_HISTORY_CAPACITY);
+    }
+
+    std::string levelPredictionReport(size_t maxHistoryEntries) {
+        auto const& cache = g_levelPredictionCache;
+        std::string report = fmt::format(
+            "RAM cache for this level (clears on level exit)\n"
+            "{} predictions | {} saves | {} safe | {} no-save | {} orb rejects | {} late skips\n",
+            cache.predictions, cache.saves, cache.safeInputs, cache.noSaves,
+            cache.orbRejections, cache.lateCrashSkips
+        );
+
+        if (cache.predictions > 0) {
+            report += fmt::format(
+                "Inputs: {} presses / {} releases\n"
+                "Prediction time: {:.2f} ms average / {:.2f} ms peak\n",
+                cache.presses, cache.releases,
+                cache.totalPredictionMilliseconds / static_cast<double>(cache.predictions),
+                cache.peakPredictionMilliseconds
+            );
+        }
+        else {
+            report += "No prediction events recorded yet.\n";
+        }
+
+        if (cache.saves > 0) {
+            double averageTicks = static_cast<double>(cache.totalSavedTicks) / static_cast<double>(cache.saves);
+            report += fmt::format(
+                "Average saved delay: {:.1f} ticks ({:.2f} frames at 60 FPS)\n",
+                averageTicks, averageTicks / 4.0
+            );
+        }
+
+        size_t visible = std::min(maxHistoryEntries, cache.historyCount);
+        report += fmt::format("Recent history: {} entries ({} total, max {})\n",
+            visible, cache.predictions, PREDICTION_HISTORY_CAPACITY);
+        for (size_t row = 0; row < visible; ++row) {
+            size_t index = (cache.nextHistoryIndex + PREDICTION_HISTORY_CAPACITY - 1 - row) % PREDICTION_HISTORY_CAPACITY;
+            auto const& record = cache.history[index];
+            std::string base = record.baseTicks >= 0 ? fmt::format("{}t", record.baseTicks) : std::string("n/a");
+            report += fmt::format(
+                "#{:<3} {:>3}% {:<5} {:<7} {:<9} +{}t (base {}) {:.2f}ms\n",
+                record.sequence, record.percent, predictionModeName(record.mode),
+                record.isDown ? "press" : "release", predictionOutcomeName(record.outcome),
+                record.delayTicks, base, record.elapsedMilliseconds
+            );
+        }
+        return report;
+    }
+
 #ifdef _WIN32
     HANDLE g_terminalLogHandle = INVALID_HANDLE_VALUE;
     std::string g_windowsTerminalLogFileName = "afterflow-terminal.log";
@@ -610,6 +802,22 @@ namespace {
             return false;
         }
         return Mod::get()->getSettingValue<bool>("terminal-enabled");
+    }
+
+    bool isPredictionBeepEnabled() {
+        return Mod::get()->getSettingValue<bool>("prediction-beep");
+    }
+
+    void preloadPredictionBeep() {
+        if (isPredictionBeepEnabled()) {
+            FMODAudioEngine::sharedEngine()->preloadEffect("counter003.ogg");
+        }
+    }
+
+    void playPredictionBeep() {
+        if (isPredictionBeepEnabled()) {
+            FMODAudioEngine::sharedEngine()->playEffect("counter003.ogg");
+        }
     }
 
     ccColor3B getUIPrimaryColor() {
@@ -2717,6 +2925,16 @@ finally {
         return CCRect(CONTENT_X + 16.f, y - 22.f, CONTENT_WIDTH - 32.f, 44.f);
     }
 
+    CCRect settingsToggleRect(int index) {
+        if (index <= 0) {
+            return settingsRowRect(0);
+        }
+        auto row = settingsRowRect(1);
+        float const gap = 8.f;
+        float const width = (row.size.width - gap) * 0.5f;
+        return CCRect(row.origin.x + (index == 2 ? width + gap : 0.f), row.origin.y, width, row.size.height);
+    }
+
     char const* stageName(int index) {
         static char const* names[STAGE_TABLE_SIZE] = {
             "tight", "quick", "steady", "flow", "deep", "wide", "max", "raw",
@@ -3062,6 +3280,7 @@ finally {
             StageBack,
             StageForward,
             CopyLog,
+            PredictionStats,
             Terminal,
             StageSlot,
             Tab,
@@ -3117,6 +3336,7 @@ finally {
         void onTickInput(int row, std::string const& text);
         void setSliderFromX(float x);
         void copyLog();
+        void showPredictionStats();
         void pauseForPanel();
         void resumeFromPanel();
         void removePauseLayers();
@@ -3202,7 +3422,7 @@ finally {
         CCLabelBMFont* m_customAddLabel = nullptr;
         CCLabelBMFont* m_customRemoveLabel = nullptr;
         CCLabelBMFont* m_settingsHeaderLabel = nullptr;
-        CCLabelBMFont* m_settingsValueLabels[2] = {};
+        CCLabelBMFont* m_settingsValueLabels[3] = {};
         CCLabelBMFont* m_settingsHintLabel = nullptr;
         CCLabelBMFont* m_settingsThemeLabels[THEME_COUNT] = {};
         CCDrawNode* m_settingsBar = nullptr;
@@ -3225,6 +3445,7 @@ finally {
         CCNode* m_stageBackButton = nullptr;
         CCNode* m_stageForwardButton = nullptr;
         CCNode* m_copyButton = nullptr;
+        CCNode* m_predictionStatsButton = nullptr;
         CCNode* m_dismissButton = nullptr;
         CCNode* m_terminalButton = nullptr;
         CCRect m_safeArea;
@@ -3328,6 +3549,7 @@ finally {
         m_stageBackButton = nullptr;
         m_stageForwardButton = nullptr;
         m_copyButton = nullptr;
+        m_predictionStatsButton = nullptr;
         m_dismissButton = nullptr;
         m_terminalButton = nullptr;
         m_settingsHeaderLabel = nullptr;
@@ -3374,7 +3596,7 @@ finally {
             m_toolsDescLabels[index] = nullptr;
         }
         for (int index = 0; index < THEME_COUNT; ++index) { m_settingsThemeLabels[index] = nullptr; }
-        for (int index = 0; index < 2; ++index) { m_settingsValueLabels[index] = nullptr; }
+        for (int index = 0; index < 3; ++index) { m_settingsValueLabels[index] = nullptr; }
         ccColor3B surface = getUISurfaceColor();
         ccColor3B shellTint = color3(
             static_cast<int>(surface.r * 0.88f),
@@ -3457,6 +3679,15 @@ finally {
         m_activityCountLabel->setAnchorPoint(CCPoint(0.f, 0.5f));
         m_activityCountLabel->setPosition(CCPoint(LOG_X + 22.f + activityWidth + 10.f, LOG_HEADER_Y));
         m_deck->addChild(m_activityCountLabel, 3);
+
+        m_predictionStatsButton = makeDeckButton(
+            m_deck,
+            predictionStatsRect(),
+            "stats",
+            false,
+            false,
+            0.58f
+        );
 
         m_copyButton = makeDeckButton(
             m_deck,
@@ -3579,10 +3810,10 @@ finally {
 
         m_settingsBar = makeDrawNode();
         m_deck->addChild(m_settingsBar, 1);
-        for (int row = 0; row < 2; ++row) {
+        for (int index = 0; index < 3; ++index) {
             drawCurvedRect(
                 m_settingsBar,
-                settingsRowRect(row),
+                settingsToggleRect(index),
                 7.f,
                 color4(255, 255, 255, 8),
                 color4(255, 255, 255, 22),
@@ -3625,14 +3856,15 @@ finally {
             }
         }
 
-        char const* settingsNames[2] = { "glow", "terminal" };
-        for (int row = 0; row < 2; ++row) {
-            auto rect = settingsRowRect(row);
-            if (auto* name = makeLabel(settingsNames[row], false, 0.72f, softTextColor())) {
+        char const* settingsNames[3] = { "glow", "terminal", "ding" };
+        for (int index = 0; index < 3; ++index) {
+            auto rect = settingsToggleRect(index);
+            if (auto* name = makeLabel(settingsNames[index], false, 0.68f, softTextColor())) {
                 name->setAnchorPoint(CCPoint(0.f, 0.5f));
-                name->setPosition(CCPoint(rect.getMinX() + 18.f, rect.getMidY()));
+                name->setPosition(CCPoint(rect.getMinX() + 14.f, rect.getMidY()));
+                fitLabelToWidth(name, rect.size.width - 26.f);
                 m_deck->addChild(name, 3);
-                m_settingsValueLabels[row] = name;
+                m_settingsValueLabels[index] = name;
             }
         }
 
@@ -3824,6 +4056,7 @@ finally {
         }
         if (m_logHighlight) { m_logHighlight->setVisible(showLog); }
         if (m_copyButton) { m_copyButton->setVisible(showLog); }
+        if (m_predictionStatsButton) { m_predictionStatsButton->setVisible(showLog); }
 
         if (m_stageNameLabel) { m_stageNameLabel->setVisible(showStage); }
         if (m_stageIndexLabel) { m_stageIndexLabel->setVisible(showStage); }
@@ -3858,7 +4091,7 @@ finally {
         if (m_tutorialButton) { m_tutorialButton->setVisible(showSettings); }
         if (m_creditsButton) { m_creditsButton->setVisible(showSettings); }
         if (m_configStatusLabel) { m_configStatusLabel->setVisible(showSettings); }
-        for (int i = 0; i < 2; ++i) {
+        for (int i = 0; i < 3; ++i) {
             if (m_settingsValueLabels[i]) { m_settingsValueLabels[i]->setVisible(showSettings); }
         }
         for (int i = 0; i < THEME_COUNT; ++i) {
@@ -4165,8 +4398,8 @@ finally {
             m_activityCountLabel->setString(fmt::format("/ {} {}", logs.size(), entryWord).c_str());
             float natural = m_activityCountLabel->getContentSize().width * m_activityCountLabel->getScale();
             float right = m_activityCountLabel->getPositionX() + natural;
-            if (right > COPY_X - 12.f && natural > 0.f) {
-                float available = (COPY_X - 12.f) - m_activityCountLabel->getPositionX();
+            if (right > PREDICTION_STATS_X - 12.f && natural > 0.f) {
+                float available = (PREDICTION_STATS_X - 12.f) - m_activityCountLabel->getPositionX();
                 if (available > 8.f) {
                     m_activityCountLabel->setScale(m_activityCountLabel->getScale() * available / natural);
                 }
@@ -4221,15 +4454,15 @@ finally {
             line->setColor(faintTextColor());
         }
 
-        if (m_settingsValueLabels[0]) {
-            bool glowOn = getUIGlow();
-            m_settingsValueLabels[0]->setString(glowOn ? "glow  on" : "glow  off");
-            m_settingsValueLabels[0]->setColor(glowOn ? logTextColor() : faintTextColor());
-        }
-        if (m_settingsValueLabels[1]) {
-            bool terminalOn = isTerminalEnabled();
-            m_settingsValueLabels[1]->setString(terminalOn ? "terminal  on" : "terminal  off");
-            m_settingsValueLabels[1]->setColor(terminalOn ? logTextColor() : faintTextColor());
+        bool const settingValues[3] = { getUIGlow(), isTerminalEnabled(), isPredictionBeepEnabled() };
+        char const* const settingNames[3] = { "glow", "terminal", "ding" };
+        for (int index = 0; index < 3; ++index) {
+            if (!m_settingsValueLabels[index]) {
+                continue;
+            }
+            m_settingsValueLabels[index]->setString(fmt::format("{}  {}", settingNames[index],
+                settingValues[index] ? "on" : "off").c_str());
+            m_settingsValueLabels[index]->setColor(settingValues[index] ? logTextColor() : faintTextColor());
         }
 
         int activeMode = -1;
@@ -5151,9 +5384,9 @@ finally {
                     return HitTarget::Theme;
                 }
             }
-            for (int row = 0; row < 2; ++row) {
-                if (settingsRowRect(row).containsPoint(point)) {
-                    if (stageSlot) { *stageSlot = row; }
+            for (int index = 0; index < 3; ++index) {
+                if (settingsToggleRect(index).containsPoint(point)) {
+                    if (stageSlot) { *stageSlot = index; }
                     return HitTarget::SettingsRow;
                 }
             }
@@ -5174,6 +5407,9 @@ finally {
         }
         if (CCRect(DISMISS_X, DISMISS_Y, DISMISS_WIDTH, DISMISS_HEIGHT).containsPoint(point)) {
             return HitTarget::Dismiss;
+        }
+        if (m_activeTab == 0 && predictionStatsRect().containsPoint(point)) {
+            return HitTarget::PredictionStats;
         }
         if (m_activeTab == 0 && CCRect(COPY_X, COPY_Y, COPY_WIDTH, COPY_HEIGHT).containsPoint(point)) {
             return HitTarget::CopyLog;
@@ -5230,6 +5466,7 @@ finally {
             case HitTarget::StageBack: return m_stageBackButton;
             case HitTarget::StageForward: return m_stageForwardButton;
             case HitTarget::CopyLog: return m_copyButton;
+            case HitTarget::PredictionStats: return m_predictionStatsButton;
             case HitTarget::Terminal: return m_terminalButton;
             case HitTarget::ImportConfig: return m_importButton;
             case HitTarget::ExportConfig: return m_exportButton;
@@ -5305,6 +5542,9 @@ finally {
             else if (m_pressedStageSlot == 1) {
                 Mod::get()->setSettingValue<bool>("terminal-enabled", !isTerminalEnabled());
             }
+            else if (m_pressedStageSlot == 2) {
+                Mod::get()->setSettingValue<bool>("prediction-beep", !isPredictionBeepEnabled());
+            }
             rebuildDeck();
             return;
         }
@@ -5370,6 +5610,9 @@ finally {
                 break;
             case HitTarget::CopyLog:
                 copyLog();
+                break;
+            case HitTarget::PredictionStats:
+                showPredictionStats();
                 break;
             case HitTarget::Terminal:
                 toggleTerminal();
@@ -5591,6 +5834,11 @@ finally {
         }
     }
 
+    void AfterflowOverlay::showPredictionStats() {
+        auto report = levelPredictionReport(6);
+        FLAlertLayer::create("Level predictions", report.c_str(), "OK")->show();
+    }
+
     void AfterflowOverlay::copyLog() {
         auto logs = recentLogSnapshot();
         std::string text;
@@ -5601,6 +5849,8 @@ finally {
         if (text.empty()) {
             text = "no afterflow activity yet\n";
         }
+        text += '\n';
+        text += levelPredictionReport(PREDICTION_HISTORY_CAPACITY);
         bool didCopy = geode::utils::clipboard::write(text.c_str());
         if (m_copyLabel) {
             m_copyLabel->stopAllActions();
@@ -6776,6 +7026,7 @@ finally {
 
         auto* player1 = baseGameLayer->m_player1;
         auto* player2 = isDual ? playLayer->m_player2 : nullptr;
+        PredictionMode predictionMode = predictionModeFor(player1, player2);
 
         float midTickFraction = 0.f;
         if (state.clickBetweenFramesSync && state.isInRealUpdate && player1 && std::abs(state.tickDeltaX) > 0.01f) {
@@ -6896,6 +7147,11 @@ finally {
             int orbLandingTick = 0;
             int candidateDelay = alignOrb(playLayer, player1, player2, isDual, horizonTicks, releaseAfterTicks, 0, &orbLandingTick);
             if (candidateDelay > 0) {
+                double elapsedMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - clickStartTime
+                ).count();
+                recordLevelPrediction(isDown, predictionMode, PredictionOutcome::OrbAligned,
+                    playLayer->getCurrentPercent(), -1, candidateDelay, maxDelayTicks, elapsedMs);
                 say("orb {} +{}t ({:g}f) -> {}t", state.wasOrbTiming ? "timing" : "press", candidateDelay, candidateDelay * TICK_DURATION, orbLandingTick);
                 state.inputShiftTicks = candidateDelay;
                 queueInput(candidateDelay - earlyTicks, isDown);
@@ -6923,12 +7179,22 @@ finally {
 
         std::string tickTagText = midTickFraction > 0.f ? fmt::format(" @{:.2f}", midTickFraction) : std::string();
         if (baseDelay >= horizonTicks) {
+            double elapsedMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - clickStartTime
+            ).count();
+            recordLevelPrediction(isDown, predictionMode, PredictionOutcome::Safe,
+                playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
             state.hasAppliedInput = isDown;
             return false;
         }
 
         bool isGroundPress = isDown && !hasFlyer && !hasAnyRobot && !hasSpider && !hasWave;
         if (isGroundPress && state.lateCrashTicks > 0 && baseDelay >= st(state.lateCrashTicks) && state.hasBaseTouchedDown) {
+            double elapsedMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - clickStartTime
+            ).count();
+            recordLevelPrediction(isDown, predictionMode, PredictionOutcome::LateCrash,
+                playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
             state.hasAppliedInput = isDown;
             return false;
         }
@@ -6955,6 +7221,11 @@ finally {
                                     isGroundPress);
 
         if (savedTick <= 0) {
+            double elapsedMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - clickStartTime
+            ).count();
+            recordLevelPrediction(isDown, predictionMode, PredictionOutcome::NoSave,
+                playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
             say("no save: {}{} dies in {}t (max {}t, best +{}t -> {}t of {})", isDown ? "press" : "release", tickTagText, baseDelay, maxDelayTicks,
                 debugBestDelay, debugBestResult, horizonTicks);
             state.hasAppliedInput = isDown;
@@ -6968,6 +7239,11 @@ finally {
             state.orbClickEnabled = false;
             simulate(playLayer, player1, player2, isDual, savedTick, isDown, verificationHorizonTicks, -1, verificationHorizonTicks, &verificationEnd);
             if (state.pressOrbRingObject != state.intendedOrbObject) {
+                double elapsedMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - clickStartTime
+                ).count();
+                recordLevelPrediction(isDown, predictionMode, PredictionOutcome::OrbRejected,
+                    playLayer->getCurrentPercent(), baseDelay, savedTick, maxDelayTicks, elapsedMs);
                 if (state.explainEnabled) {
                     say("orb save +{}t rejected: press would use {}, not the clicked orb", savedTick,
                         state.pressOrbRingObject ? "a different ring" : "no ring");
@@ -6980,6 +7256,11 @@ finally {
         if (isRobotPress) {
             releaseAfterTicks = robotUsedHoldTicks;
         }
+        double elapsedMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - clickStartTime
+        ).count();
+        recordLevelPrediction(isDown, predictionMode, PredictionOutcome::Saved,
+            playLayer->getCurrentPercent(), baseDelay, savedTick, maxDelayTicks, elapsedMs);
         say("saved {}{} +{}t ({:g}f)  {}->{}  [max {}]{}", isDown ? "press" : "release", tickTagText, savedTick, savedTick * TICK_DURATION, baseDelay, landingTick, maxDelayTicks,
             isCubeStyleWave && isMarginUsed ? std::string("  +margin")
             : isRobotPress ? fmt::format("  hold {}t", robotUsedHoldTicks) : std::string());
@@ -7113,6 +7394,12 @@ $on_mod(Loaded) {
         attachAfterflowOverlay(scene);
     });
     (void)sceneListener;
+    static auto predictionBeepListener = listenForSettingChanges<bool>("prediction-beep", [](bool enabled) {
+        if (enabled && GameManager::get()->m_playLayer) {
+            preloadPredictionBeep();
+        }
+    });
+    (void)predictionBeepListener;
     static auto primaryColorListener = listenForSettingChanges<ccColor3B>("ui-primary-color", [](ccColor3B) {
         if (auto* overlay = activeAfterflowOverlay()) {
             overlay->rebuildDeck();
@@ -7181,7 +7468,10 @@ class $modify(BufPlayLayer, PlayLayer) {
             return false;
         }
         dropGhosts();
+        clearRecentLog();
+        resetLevelPredictionCache();
         readSettings();
+        preloadPredictionBeep();
         applyStage();
         state.ghostPlayer1 = makeGhost(this);
         state.ghostPlayer2 = makeGhost(this);
@@ -7204,6 +7494,8 @@ class $modify(BufPlayLayer, PlayLayer) {
         resetPending();
         dropGhosts();
         PlayLayer::onQuit();
+        resetLevelPredictionCache();
+        clearRecentLog();
     }
 
     void resetLevel() {
