@@ -1,4 +1,5 @@
 #include <Geode/Geode.hpp>
+#include <Geode/cocos/layers_scenes_transitions_nodes/CCTransition.h>
 #include <Geode/utils/general.hpp>
 #include <Geode/utils/async.hpp>
 #include <Geode/utils/cocos.hpp>
@@ -5976,8 +5977,22 @@ finally {
         }
     }
 
+    // SceneEvent is emitted for the scene that will be switched to. When
+    // that scene is a transition, the overlay belongs on its incoming scene,
+    // not on the transition wrapper that owns both scene trees.
+    CCScene* sceneContentRoot(CCScene* scene) {
+        while (scene) {
+            auto* transition = typeinfo_cast<CCTransitionScene*>(scene);
+            if (!transition || !transition->m_pInScene || transition->m_pInScene == scene) {
+                break;
+            }
+            scene = transition->m_pInScene;
+        }
+        return scene;
+    }
+
     void AfterflowOverlay::removePauseLayers() {
-        auto* scene = CCScene::get();
+        auto* scene = sceneContentRoot(CCScene::get());
         if (!scene) {
             return;
         }
@@ -5991,7 +6006,7 @@ finally {
     }
 
     AfterflowOverlay* activeAfterflowOverlay() {
-        auto* scene = CCScene::get();
+        auto* scene = sceneContentRoot(CCScene::get());
         if (!scene) {
             return nullptr;
         }
@@ -6005,6 +6020,7 @@ finally {
     }
 
     void attachAfterflowOverlay(CCScene* scene) {
+        scene = sceneContentRoot(scene);
         if (!scene || scene->getChildByType<AfterflowOverlay>(0)) {
             return;
         }
@@ -6034,7 +6050,7 @@ finally {
     }
 
     void toggleAfterflowPanel() {
-        auto* scene = CCScene::get();
+        auto* scene = sceneContentRoot(CCScene::get());
         if (!scene) {
             return;
         }
@@ -6847,7 +6863,8 @@ finally {
         return false;
     }
 
-    int searchSmallest(int horizonTicks, int maxDelayTicks, int baseDelay, int* landingTick, std::function<int(int, int, SimEnd*)> const& scoreFunction,
+    template <class ScoreFunction>
+    int searchSmallest(int horizonTicks, int maxDelayTicks, int baseDelay, int* landingTick, ScoreFunction const& scoreFunction,
         double budgetMilliseconds = -1.0, bool isQuiet = false, bool needsFullSearch = false) {
         if (budgetMilliseconds < 0.0) {
             budgetMilliseconds = state.budgetMilliseconds;
@@ -6885,7 +6902,8 @@ finally {
         return 0;
     }
 
-    int searchTwoPass(int horizonTicks, int maxDelayTicks, int baseDelay, int* landingTick, std::function<int(int, int, SimEnd*)> const& scoreFunction,
+    template <class ScoreFunction>
+    int searchTwoPass(int horizonTicks, int maxDelayTicks, int baseDelay, int* landingTick, ScoreFunction const& scoreFunction,
         bool needsFullSearch = false) {
         isQuickScore = true;
         int candidateDelay = searchSmallest(horizonTicks, maxDelayTicks, baseDelay, landingTick, scoreFunction, state.budgetMilliseconds * 0.5, true, needsFullSearch);
