@@ -1,3 +1,11 @@
+# v2.4.4
+
+- **iOS crash fix**: defer overlay/font/sprite construction out of the scene-transition callback and build it on the next main-thread tick.
+- **iOS lifecycle safety**: defer the pause-menu button action until the touch dispatcher has finished; move the startup version check until the menu is ready.
+- **simulation performance**: replace node-allocating object epoch maps with reusable flat pointer tables; prediction membership semantics, search order, budgets and timing remain unchanged.
+- [fix] protect the stage strip if bitmap-font label creation fails.
+- [build] disable unused C++ module dependency scanning to fix Android NDK builds; pin iOS-readable deflate packaging and configure the iOS bindings build.
+
 # v2.4.3
 
 - **prediction ding**: optional in-panel and Geode setting for the same built-in `counter003.ogg` sound used by Predictive Input Bluffer; preloaded at level start to avoid first-use hitching.
