@@ -20,6 +20,11 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
 # Set up the mod binary
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
 
+# This project does not use C++20 modules. Disable CMake's dependency scan;
+# on Android the host clang-scan-deps cannot parse the NDK-built PCH and
+# fails before compiling the mod itself.
+set_target_properties(${PROJECT_NAME} PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+
 # Large translation units need /bigobj on MSVC-compatible compilers.
 # These flags are intentionally not applied to other toolchains.
 if (CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
