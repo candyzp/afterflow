@@ -1,5 +1,4 @@
 #include <Geode/Geode.hpp>
-#include <Geode/cocos/layers_scenes_transitions_nodes/CCTransition.h>
 #include <Geode/utils/general.hpp>
 #include <Geode/utils/async.hpp>
 #include <Geode/utils/cocos.hpp>
@@ -454,49 +453,147 @@ namespace {
     // cleared between timelines, so a normal unordered_set repeatedly frees
     // and reallocates nodes for the same level objects. Epochs keep those nodes
     // alive for the level and make per-simulation clear O(1).
+    // Reusable pointer set for simulation bookkeeping. The sets are queried
+    // from every simulated collision tick, so keep their storage flat and
+    // preallocated: unlike unordered_map this avoids one heap node per object
+    // and improves pointer-lookup locality in the prediction hot path.
     class ObjectEpochSet {
-        std::unordered_map<GameObject*, std::uint32_t> m_epochs;
+        struct Entry {
+            GameObject* object = nullptr;
+            std::uint32_t epoch = 0;
+        };
+
+        std::vector<Entry> m_entries;
         std::uint32_t m_epoch = 1;
+        size_t m_keyCount = 0;
         size_t m_activeCount = 0;
+
+        static size_t hashObject(GameObject* object) {
+            auto address = reinterpret_cast<std::uintptr_t>(object);
+            address >>= 4;
+            if constexpr (sizeof(std::uintptr_t) == 8) {
+                std::uint64_t value = static_cast<std::uint64_t>(address);
+                value ^= value >> 33;
+                value *= 0xff51afd7ed558ccdULL;
+                value ^= value >> 33;
+                value *= 0xc4ceb9fe1a85ec53ULL;
+                value ^= value >> 33;
+                return static_cast<size_t>(value);
+            }
+            else {
+                std::uint32_t value = static_cast<std::uint32_t>(address);
+                value ^= value >> 16;
+                value *= 0x7feb352dU;
+                value ^= value >> 15;
+                value *= 0x846ca68bU;
+                value ^= value >> 16;
+                return static_cast<size_t>(value);
+            }
+        }
+
+        void rehash(size_t capacity) {
+            std::vector<Entry> replacement(capacity);
+            size_t const mask = capacity - 1;
+            for (auto const& entry : m_entries) {
+                if (!entry.object) {
+                    continue;
+                }
+                size_t index = hashObject(entry.object) & mask;
+                while (replacement[index].object) {
+                    index = (index + 1) & mask;
+                }
+                replacement[index] = entry;
+            }
+            m_entries.swap(replacement);
+        }
 
     public:
         bool contains(GameObject* object) const {
-            auto found = m_epochs.find(object);
-            return found != m_epochs.end() && found->second == m_epoch;
+            if (!object || m_entries.empty()) {
+                return false;
+            }
+            size_t const mask = m_entries.size() - 1;
+            size_t index = hashObject(object) & mask;
+            for (size_t probes = 0; probes < m_entries.size(); ++probes) {
+                auto const& entry = m_entries[index];
+                if (!entry.object) {
+                    return false;
+                }
+                if (entry.object == object) {
+                    return entry.epoch == m_epoch;
+                }
+                index = (index + 1) & mask;
+            }
+            return false;
         }
 
         void insert(GameObject* object) {
             if (!object) {
                 return;
             }
-            auto found = m_epochs.find(object);
-            if (found == m_epochs.end()) {
-                m_epochs.emplace(object, m_epoch);
-                ++m_activeCount;
+            if (m_entries.empty()) {
+                reserve(128);
             }
-            else if (found->second != m_epoch) {
-                found->second = m_epoch;
-                ++m_activeCount;
+            if ((m_keyCount + 1) * 10 >= m_entries.size() * 7) {
+                rehash(m_entries.size() * 2);
             }
+
+            size_t const mask = m_entries.size() - 1;
+            size_t index = hashObject(object) & mask;
+            for (size_t probes = 0; probes < m_entries.size(); ++probes) {
+                auto& entry = m_entries[index];
+                if (!entry.object) {
+                    entry.object = object;
+                    entry.epoch = m_epoch;
+                    ++m_keyCount;
+                    ++m_activeCount;
+                    return;
+                }
+                if (entry.object == object) {
+                    if (entry.epoch != m_epoch) {
+                        entry.epoch = m_epoch;
+                        ++m_activeCount;
+                    }
+                    return;
+                }
+                index = (index + 1) & mask;
+            }
+
+            // Defensive fallback; the load-factor check above should make this
+            // unreachable, but never silently lose a membership insertion.
+            rehash(m_entries.size() * 2);
+            insert(object);
         }
 
         void clear() {
             ++m_epoch;
             if (m_epoch == 0) {
-                m_epochs.clear();
+                for (auto& entry : m_entries) {
+                    entry.epoch = 0;
+                }
                 m_epoch = 1;
             }
             m_activeCount = 0;
         }
 
         void reset() {
-            m_epochs.clear();
+            for (auto& entry : m_entries) {
+                entry = {};
+            }
             m_epoch = 1;
+            m_keyCount = 0;
             m_activeCount = 0;
         }
 
         void reserve(size_t count) {
-            m_epochs.reserve(count);
+            size_t capacity = 64;
+            size_t const wanted = count * 2;
+            while (capacity < wanted) {
+                capacity *= 2;
+            }
+            if (capacity > m_entries.size()) {
+                rehash(capacity);
+            }
         }
 
         bool empty() const {
@@ -3803,9 +3900,12 @@ finally {
 
         m_stageTrack = makeDrawNode();
         m_deck->addChild(m_stageTrack, 1);
-        for (int index = 0; index < stageTotalCount(); ++index) {
+        for (int index = 0; index < stageTotalCount() && index < STAGE_MAX_STAGES; ++index) {
             auto cell = stageCellRect(index);
             auto* nameLabel = makeLabel(stageLabelAt(index), false, 0.58f, softTextColor());
+            if (!nameLabel) {
+                continue;
+            }
             float natural = nameLabel->getContentSize().width * nameLabel->getScale();
             if (natural > cell.size.width - 8.f && natural > 0.f) {
                 nameLabel->setScale(nameLabel->getScale() * (cell.size.width - 8.f) / natural);
@@ -4249,7 +4349,7 @@ finally {
                 1.f
             );
 
-            for (int index = 0; index < stageTotalCount(); ++index) {
+            for (int index = 0; index < stageTotalCount() && index < STAGE_MAX_STAGES; ++index) {
                 auto* nameLabel = m_stageNameLabels[index];
                 if (!nameLabel) {
                     continue;
@@ -5977,22 +6077,8 @@ finally {
         }
     }
 
-    // SceneEvent is emitted for the scene that will be switched to. When
-    // that scene is a transition, the overlay belongs on its incoming scene,
-    // not on the transition wrapper that owns both scene trees.
-    CCScene* sceneContentRoot(CCScene* scene) {
-        while (scene) {
-            auto* transition = typeinfo_cast<CCTransitionScene*>(scene);
-            if (!transition || !transition->m_pInScene || transition->m_pInScene == scene) {
-                break;
-            }
-            scene = transition->m_pInScene;
-        }
-        return scene;
-    }
-
     void AfterflowOverlay::removePauseLayers() {
-        auto* scene = sceneContentRoot(CCScene::get());
+        auto* scene = CCScene::get();
         if (!scene) {
             return;
         }
@@ -6006,7 +6092,7 @@ finally {
     }
 
     AfterflowOverlay* activeAfterflowOverlay() {
-        auto* scene = sceneContentRoot(CCScene::get());
+        auto* scene = CCScene::get();
         if (!scene) {
             return nullptr;
         }
@@ -6019,17 +6105,40 @@ finally {
         }
     }
 
-    void attachAfterflowOverlay(CCScene* scene) {
-        scene = sceneContentRoot(scene);
+    void buildAfterflowOverlay(CCScene* scene) {
         if (!scene || scene->getChildByType<AfterflowOverlay>(0)) {
             return;
         }
+        static bool announcedBuild = false;
+        if (!announcedBuild) {
+            announcedBuild = true;
+            log::info("afterflow: building overlay on first scene");
+        }
         auto* overlay = AfterflowOverlay::create();
         if (!overlay) {
+            log::warn("afterflow: overlay creation failed");
             return;
         }
         overlay->setZOrder(9999);
         scene->addChild(overlay);
+        static bool announcedAttach = false;
+        if (!announcedAttach) {
+            announcedAttach = true;
+            log::info("afterflow: overlay attached");
+        }
+    }
+
+    void attachAfterflowOverlay(CCScene* scene) {
+        if (!scene || scene->getChildByType<AfterflowOverlay>(0)) {
+            return;
+        }
+        // SceneEvent is sent from CCDirector::willSwitchToScene. Constructing
+        // fonts, sprites and GL-backed nodes in that transition callback can
+        // crash iOS. Defer construction to the next main-thread tick and attach
+        // to whichever scene is actually running then.
+        Loader::get()->queueInMainThread([] {
+            buildAfterflowOverlay(CCScene::get());
+        });
     }
 
     void ensureAfterflowOverlay() {
@@ -6050,13 +6159,13 @@ finally {
     }
 
     void toggleAfterflowPanel() {
-        auto* scene = sceneContentRoot(CCScene::get());
+        auto* scene = CCScene::get();
         if (!scene) {
             return;
         }
         auto* overlay = scene->getChildByType<AfterflowOverlay>(0);
         if (!overlay) {
-            ensureAfterflowOverlay();
+            buildAfterflowOverlay(scene);
             overlay = scene->getChildByType<AfterflowOverlay>(0);
         }
         if (overlay) {
@@ -7457,6 +7566,7 @@ finally {
 
 $on_mod(Loaded) {
 
+    log::info("afterflow: load start ({})", hostOSName());
     constexpr int STAGE_SCHEMA_VERSION = 2;
     int savedStageIndex = std::clamp(Mod::get()->getSavedValue<int>("stage", 0), 0, stageTotalCount() - 1);
     if (Mod::get()->getSavedValue<int>("stage-schema", 1) < STAGE_SCHEMA_VERSION) {
@@ -7528,7 +7638,7 @@ $on_mod(Loaded) {
         say("{} opens the control deck", panelKey());
     }
     say("host os: {} ({})", hostOSName(), hostOSDescription());
-    checkForUpdates(true);
+    log::info("afterflow: load complete");
 }
 
 class $modify(BufPlayLayer, PlayLayer) {
@@ -7724,7 +7834,9 @@ class $modify(BufPauseLayer, PauseLayer) {
     }
 
     void onAfterflowButton(CCObject*) {
-        toggleAfterflowPanel();
+        Loader::get()->queueInMainThread([] {
+            toggleAfterflowPanel();
+        });
     }
 };
 
@@ -7737,6 +7849,10 @@ class $modify(BufMenuLayer, MenuLayer) {
         this->runAction(CCSequence::create(
             CCDelayTime::create(0.2f),
             CallFuncExt::create([] {
+                // Do not start networking while the iOS loader is still
+                // finalizing mod startup. The menu is the first safe point.
+                log::info("afterflow: menu ready");
+                checkForUpdates(true);
                 if (!showUpdatePopup()) {
                     showKeybindIntro();
                 }
