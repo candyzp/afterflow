@@ -18,7 +18,7 @@ jobs:
           - name: Windows
             os: windows-latest
           - name: macOS
-            os: macos-latest
+            os: macos-26-intel
           - name: Android32
             os: ubuntu-latest
             target: Android32
@@ -26,13 +26,13 @@ jobs:
             os: ubuntu-latest
             target: Android64
           - name: iOS
-            os: macos-latest
+            os: macos-26-intel
             target: iOS
+            bindings-ref: 1605f500d053f8de122bf5c7dc6d17c24866e02e
+            configure-args: -DSKIP_BUILDING_CODEGEN=OFF
 
     name: ${{ matrix.config.name }}
     runs-on: ${{ matrix.config.os }}
-    continue-on-error: ${{ matrix.config.name == 'iOS' }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -40,8 +40,11 @@ jobs:
         uses: geode-sdk/build-geode-mod@main
         with:
           sdk: given
+          cli: latest
           combine: true
           target: ${{ matrix.config.target }}
+          bindings-ref: ${{ matrix.config.bindings-ref }}
+          configure-args: ${{ matrix.config.configure-args }}
 
   package:
     name: Package builds
@@ -50,8 +53,17 @@ jobs:
     if: ${{ !cancelled() }}
 
     steps:
-      - uses: geode-sdk/build-geode-mod/combine@main
+      - uses: actions/checkout@v4
+
+      # The iOS loader does not support zstd-compressed .geode archives.
+      # Pin the combine action and force store/deflate compression.
+      - uses: geode-sdk/build-geode-mod/combine@61a56c697aea9655e3f31c6c1b83870431f30434
         id: build
+        with:
+          zstd: false
+
+      - name: Verify the package uses iOS-readable compression
+        run: python3 tools/check-geode-compression.py "${{ steps.build.outputs.build-output }}"
 
       - uses: actions/upload-artifact@v4
         with:
