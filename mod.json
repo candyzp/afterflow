@@ -134,6 +134,17 @@
       "max": 1.5,
       "step": 0.05
     },
+    "prediction-title": {
+      "type": "title",
+      "name": "prediction",
+      "description": "prediction behavior options"
+    },
+    "orb-prediction": {
+      "type": "bool",
+      "name": "orb prediction",
+      "description": "Enable orb alignment, alternate orb-hit simulations, and orb timing checks. Turn off to skip orb-specific prediction work while keeping normal input prediction enabled.",
+      "default": false
+    },
     "prediction-audio-title": {
       "type": "title",
       "name": "prediction audio"
@@ -143,12 +154,6 @@
       "name": "ding on saved input",
       "description": "Play the same short counter ding as Predictive Input Bluffer whenever Afterflow successfully delays an input. Uses Geometry Dash's built-in counter003 sound.",
       "default": true
-    },
-    "orb-prediction": {
-      "type": "bool",
-      "name": "orb prediction",
-      "description": "Include orb alignment, alternate orb-hit simulations, and orb timing checks. Turn this off to skip orb-specific prediction work while keeping normal input prediction enabled.",
-      "default": false
     },
     "mobile-title": {
       "type": "title",
