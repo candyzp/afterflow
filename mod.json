@@ -148,7 +148,7 @@
       "type": "bool",
       "name": "orb prediction",
       "description": "Include orb alignment, alternate orb-hit simulations, and orb timing checks. Turn this off to skip orb-specific prediction work while keeping normal input prediction enabled.",
-      "default": true
+      "default": false
     },
     "mobile-title": {
       "type": "title",
