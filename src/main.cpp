@@ -673,7 +673,7 @@ namespace {
         int autoReleaseTick1 = -1, autoReleaseTick2 = -1;
         bool wasOrbTiming = false;
         bool tryBothOrbCandidates = true;
-        bool orbClickEnabled = true;
+        bool orbClickEnabled = false;
         bool hasTouchedOrb = false;
         bool skipPressHandling = false;
         bool avoidMovingObjects = true;
@@ -687,7 +687,7 @@ namespace {
         bool waveVersion46Mode = false;
         bool orbAlignEnabled = true;
         bool orbAlignToGround = false;
-        bool orbPredictionEnabled = true;
+        bool orbPredictionEnabled = false;
         bool ignoreTouchingObjects = true;
         bool hasRealRectangle = false;
         CCRect realRectanglePlayer1, realRectanglePlayer2;
