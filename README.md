@@ -140,6 +140,10 @@ lucide.dev for icon
 this is a cheat. it changes input timing so your runs are not legit. dont use it on rated levels or leaderboard submissions or anything you want to claim as legit. some levels and lists have input buffer or macro detectors so you can get flagged.
 
 
+## prediction controls
+
+- **Orb Prediction** is on by default. Turn it off in the in-game Settings tab or Geode mod settings to skip orb alignment, extra orb-hit/timing candidates, and orb-specific verification. Normal input-delay prediction remains active, and real in-game orb behavior is unchanged.
+
 ## prediction feedback
 
 - **Ding on saved input** is available in the Afterflow in-game Settings tab and Geode mod settings. It uses Geometry Dash's built-in `counter003.ogg` sound, preloaded when a level starts.

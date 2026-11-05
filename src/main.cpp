@@ -687,6 +687,7 @@ namespace {
         bool waveVersion46Mode = false;
         bool orbAlignEnabled = true;
         bool orbAlignToGround = false;
+        bool orbPredictionEnabled = true;
         bool ignoreTouchingObjects = true;
         bool hasRealRectangle = false;
         CCRect realRectanglePlayer1, realRectanglePlayer2;
@@ -975,6 +976,10 @@ namespace {
 
     bool isPredictionBeepEnabled() {
         return Mod::get()->getSettingValue<bool>("prediction-beep");
+    }
+
+    bool isOrbPredictionEnabled() {
+        return Mod::get()->getSettingValue<bool>("orb-prediction");
     }
 
     void preloadPredictionBeep() {
@@ -2609,6 +2614,8 @@ finally {
         state.orbAlignEnabled = true;
         state.orbTimingEnabled = true;
         state.orbAlignToGround = false;
+        state.orbPredictionEnabled = isOrbPredictionEnabled();
+        state.orbClickEnabled = state.orbPredictionEnabled && state.assumeOrbHits;
         state.fullSimulationState = true;
         state.learningEnabled = false;
         state.robotSmartEnabled = true;
@@ -3101,13 +3108,11 @@ finally {
     }
 
     CCRect settingsToggleRect(int index) {
-        if (index <= 0) {
-            return settingsRowRect(0);
-        }
-        auto row = settingsRowRect(1);
+        auto row = settingsRowRect(index / 2);
         float const gap = 8.f;
         float const width = (row.size.width - gap) * 0.5f;
-        return CCRect(row.origin.x + (index == 2 ? width + gap : 0.f), row.origin.y, width, row.size.height);
+        bool const isRightColumn = (index % 2) != 0;
+        return CCRect(row.origin.x + (isRightColumn ? width + gap : 0.f), row.origin.y, width, row.size.height);
     }
 
     char const* stageName(int index) {
@@ -3597,7 +3602,7 @@ finally {
         CCLabelBMFont* m_customAddLabel = nullptr;
         CCLabelBMFont* m_customRemoveLabel = nullptr;
         CCLabelBMFont* m_settingsHeaderLabel = nullptr;
-        CCLabelBMFont* m_settingsValueLabels[3] = {};
+        CCLabelBMFont* m_settingsValueLabels[4] = {};
         CCLabelBMFont* m_settingsHintLabel = nullptr;
         CCLabelBMFont* m_settingsThemeLabels[THEME_COUNT] = {};
         CCDrawNode* m_settingsBar = nullptr;
@@ -3771,7 +3776,7 @@ finally {
             m_toolsDescLabels[index] = nullptr;
         }
         for (int index = 0; index < THEME_COUNT; ++index) { m_settingsThemeLabels[index] = nullptr; }
-        for (int index = 0; index < 3; ++index) { m_settingsValueLabels[index] = nullptr; }
+        for (int index = 0; index < 4; ++index) { m_settingsValueLabels[index] = nullptr; }
         ccColor3B surface = getUISurfaceColor();
         ccColor3B shellTint = color3(
             static_cast<int>(surface.r * 0.88f),
@@ -3988,7 +3993,7 @@ finally {
 
         m_settingsBar = makeDrawNode();
         m_deck->addChild(m_settingsBar, 1);
-        for (int index = 0; index < 3; ++index) {
+        for (int index = 0; index < 4; ++index) {
             drawCurvedRect(
                 m_settingsBar,
                 settingsToggleRect(index),
@@ -4034,8 +4039,8 @@ finally {
             }
         }
 
-        char const* settingsNames[3] = { "glow", "terminal", "ding" };
-        for (int index = 0; index < 3; ++index) {
+        char const* settingsNames[4] = { "glow", "orb prediction", "terminal", "ding" };
+        for (int index = 0; index < 4; ++index) {
             auto rect = settingsToggleRect(index);
             if (auto* name = makeLabel(settingsNames[index], false, 0.68f, softTextColor())) {
                 name->setAnchorPoint(CCPoint(0.f, 0.5f));
@@ -4269,7 +4274,7 @@ finally {
         if (m_tutorialButton) { m_tutorialButton->setVisible(showSettings); }
         if (m_creditsButton) { m_creditsButton->setVisible(showSettings); }
         if (m_configStatusLabel) { m_configStatusLabel->setVisible(showSettings); }
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 4; ++i) {
             if (m_settingsValueLabels[i]) { m_settingsValueLabels[i]->setVisible(showSettings); }
         }
         for (int i = 0; i < THEME_COUNT; ++i) {
@@ -4632,9 +4637,9 @@ finally {
             line->setColor(faintTextColor());
         }
 
-        bool const settingValues[3] = { getUIGlow(), isTerminalEnabled(), isPredictionBeepEnabled() };
-        char const* const settingNames[3] = { "glow", "terminal", "ding" };
-        for (int index = 0; index < 3; ++index) {
+        bool const settingValues[4] = { getUIGlow(), isOrbPredictionEnabled(), isTerminalEnabled(), isPredictionBeepEnabled() };
+        char const* const settingNames[4] = { "glow", "orb prediction", "terminal", "ding" };
+        for (int index = 0; index < 4; ++index) {
             if (!m_settingsValueLabels[index]) {
                 continue;
             }
@@ -5562,7 +5567,7 @@ finally {
                     return HitTarget::Theme;
                 }
             }
-            for (int index = 0; index < 3; ++index) {
+            for (int index = 0; index < 4; ++index) {
                 if (settingsToggleRect(index).containsPoint(point)) {
                     if (stageSlot) { *stageSlot = index; }
                     return HitTarget::SettingsRow;
@@ -5718,9 +5723,12 @@ finally {
                 Mod::get()->setSettingValue<bool>("ui-glow", !getUIGlow());
             }
             else if (m_pressedStageSlot == 1) {
-                Mod::get()->setSettingValue<bool>("terminal-enabled", !isTerminalEnabled());
+                Mod::get()->setSettingValue<bool>("orb-prediction", !isOrbPredictionEnabled());
             }
             else if (m_pressedStageSlot == 2) {
+                Mod::get()->setSettingValue<bool>("terminal-enabled", !isTerminalEnabled());
+            }
+            else if (m_pressedStageSlot == 3) {
                 Mod::get()->setSettingValue<bool>("prediction-beep", !isPredictionBeepEnabled());
             }
             rebuildDeck();
@@ -6512,6 +6520,7 @@ finally {
         state.isInputDown = isDown;
 
         bool isSecondPlayer = isDual && state.ghostPlayer2 && player2;
+        bool const trackOrbPrediction = state.orbPredictionEnabled;
         state.hasRealRectangle = state.ignoreTouchingObjects;
         state.harmlessObjects.clear();
         if (state.hasRealRectangle) {
@@ -6609,14 +6618,14 @@ finally {
                 checkGhost(gameLayer, state.ghostPlayer2, deltaTime);
             }
 
-            if (state.firstOrbRingObject && state.firstOrbPlayerObject && state.orbCloseSampleTick >= 0) {
+            if (trackOrbPrediction && state.firstOrbRingObject && state.firstOrbPlayerObject && state.orbCloseSampleTick >= 0) {
                 float orbDistanceSquared = orbDistanceSq(state.firstOrbPlayerObject, state.firstOrbRingObject);
                 if (orbDistanceSquared < state.orbCloseDistanceSquared) {
                     state.orbCloseDistanceSquared = orbDistanceSquared;
                     state.orbCloseSampleTick = state.simulationTick;
                 }
             }
-            if (state.isProbing) {
+            if (trackOrbPrediction && state.isProbing) {
                 for (auto& probeOrb : state.probeOrbCandidates) {
                     float probeDistanceSquared = orbDistanceSq(probeOrb.playerObject, probeOrb.ringObject);
                     if (probeDistanceSquared < probeOrb.closeDistanceSquared) {
@@ -6688,6 +6697,11 @@ finally {
         int stopAtTick, SimEnd* simulationEnd) {
         state.orbClickEnabled = state.assumeOrbHits;
         state.hasTouchedOrb = false;
+        if (!state.orbPredictionEnabled) {
+            state.orbClickEnabled = false;
+            state.orbClickDelayTicks = 0;
+            return simulate(gameLayer, player1, player2, isDual, delayTicks, isDown, horizonTicks, releaseAfterTicks, stopAtTick, simulationEnd);
+        }
         int isFirst = simulate(gameLayer, player1, player2, isDual, delayTicks, isDown, horizonTicks, releaseAfterTicks, stopAtTick, simulationEnd);
         if (!state.tryBothOrbCandidates || !state.smartEnabled || !state.hasTouchedOrb || isFirst >= stopAtTick) {
             return isFirst;
@@ -7347,7 +7361,7 @@ finally {
         }
 
         bool isGrounded = player1->m_isOnGround && (!player2 || player2->m_isOnGround);
-        if (isDown && !hasWave && !hasShip && state.orbAlignEnabled && state.smartEnabled && (!isGrounded || state.orbAlignToGround)) {
+        if (isDown && !hasWave && !hasShip && state.orbPredictionEnabled && state.orbAlignEnabled && state.smartEnabled && (!isGrounded || state.orbAlignToGround)) {
             int orbLandingTick = 0;
             int candidateDelay = alignOrb(playLayer, player1, player2, isDual, horizonTicks, releaseAfterTicks, 0, &orbLandingTick);
             if (candidateDelay > 0) {
@@ -7436,7 +7450,7 @@ finally {
             return false;
         }
 
-        if (isDown && !state.skipPressHandling) {
+        if (isDown && !state.skipPressHandling && state.orbPredictionEnabled) {
             SimEnd verificationEnd;
             int verificationHorizonTicks = st(8);
             state.retapTick = -1;
@@ -7605,6 +7619,14 @@ $on_mod(Loaded) {
         }
     });
     (void)predictionBeepListener;
+    static auto orbPredictionListener = listenForSettingChanges<bool>("orb-prediction", [](bool enabled) {
+        state.orbPredictionEnabled = enabled;
+        state.orbClickEnabled = enabled && state.assumeOrbHits;
+        if (!enabled) {
+            state.orbClickDelayTicks = 0;
+        }
+    });
+    (void)orbPredictionListener;
     static auto primaryColorListener = listenForSettingChanges<ccColor3B>("ui-primary-color", [](ccColor3B) {
         if (auto* overlay = activeAfterflowOverlay()) {
             overlay->rebuildDeck();
@@ -8090,12 +8112,14 @@ class $modify(BufPlayerObject, PlayerObject) {
             PlayerObject::ringJump(ringObject, skipCollisionCheck);
             if (m_yVelocity != verticalVelocity || m_isUpsideDown != isUpsideDown || m_isDashing != isDashing) {
                 state.usedOrbs.insert(ringObject);
-                if (state.orbUseTick < 0) {
-                    state.orbUseTick = state.simulationTick;
-                }
+                if (state.orbPredictionEnabled) {
+                    if (state.orbUseTick < 0) {
+                        state.orbUseTick = state.simulationTick;
+                    }
 
-                if (state.isInputDown && state.simulationTick >= state.inputTickIndex && !state.pressOrbRingObject) {
-                    state.pressOrbRingObject = ringObject;
+                    if (state.isInputDown && state.simulationTick >= state.inputTickIndex && !state.pressOrbRingObject) {
+                        state.pressOrbRingObject = ringObject;
+                    }
                 }
             }
             return;
@@ -8106,11 +8130,13 @@ class $modify(BufPlayerObject, PlayerObject) {
     void startDashing(DashRingObject* dashRing) {
         if (state.isSimulating && isGhost(this)) {
             state.usedOrbs.insert(dashRing);
-            if (state.orbUseTick < 0) {
-                state.orbUseTick = state.simulationTick;
-            }
-            if (state.isInputDown && state.simulationTick >= state.inputTickIndex && !state.pressOrbRingObject) {
-                state.pressOrbRingObject = dashRing;
+            if (state.orbPredictionEnabled) {
+                if (state.orbUseTick < 0) {
+                    state.orbUseTick = state.simulationTick;
+                }
+                if (state.isInputDown && state.simulationTick >= state.inputTickIndex && !state.pressOrbRingObject) {
+                    state.pressOrbRingObject = dashRing;
+                }
             }
         }
         PlayerObject::startDashing(dashRing);
@@ -8162,6 +8188,9 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
         }
 
         uint64_t keptTypesMask = state.smartEnabled ? (COLLIDING_OBJECT_TYPES | INTERACTABLE_OBJECT_TYPES) : COLLIDING_OBJECT_TYPES;
+        bool const hasDisabledObjects = !state.simulationDisabledObjects.empty();
+        bool hasHarmlessObjects = !state.harmlessObjects.empty();
+        bool const hasRealRectangle = state.hasRealRectangle;
         bool hasRectangle = false;
         CCRect ghostRectangle;
         auto& objectList = *gameObjects;
@@ -8174,17 +8203,18 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             uint64_t typeBitMask = objectType < 64 ? (1ull << objectType) : 0;
             if (keptTypesMask & typeBitMask) {
 
-                if (!state.simulationDisabledObjects.empty() && state.simulationDisabledObjects.contains(gameObject)) {
+                if (hasDisabledObjects && state.simulationDisabledObjects.contains(gameObject)) {
                     continue;
                 }
-                if (state.hasRealRectangle && (typeBitMask & HAZARD_OBJECT_TYPES)) {
-                    if (!state.harmlessObjects.empty() && state.harmlessObjects.contains(gameObject)) {
+                if (hasRealRectangle && (typeBitMask & HAZARD_OBJECT_TYPES)) {
+                    if (hasHarmlessObjects && state.harmlessObjects.contains(gameObject)) {
                         continue;
                     }
                     if (state.simulationTick <= 1) {
                         auto const& rectangle = gameObject->getObjectRect();
                         if (rectangle.intersectsRect(state.realRectanglePlayer1) || rectangle.intersectsRect(state.realRectanglePlayer2)) {
                             state.harmlessObjects.insert(gameObject);
+                            hasHarmlessObjects = true;
                             continue;
                         }
                     }
@@ -8242,34 +8272,36 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
                 return;
             }
             snapshotObject(ringObject);
-            state.hasTouchedOrb = true;
-            if (state.firstOrbTouchTick < 0) {
-                state.firstOrbTouchTick = state.simulationTick;
-                state.firstOrbRingObject = ringObject;
-                state.firstOrbPlayerObject = playerObject;
-                state.orbTouchDistanceSquared = orbDistanceSq(playerObject, ringObject);
-                state.orbCloseSampleTick = state.simulationTick;
-                state.orbCloseDistanceSquared = state.orbTouchDistanceSquared;
-            }
-
-            if (state.isProbing) {
-                bool isKnown = false;
-                for (auto const& existingProbe : state.probeOrbCandidates) {
-                    if (existingProbe.ringObject == ringObject) {
-                        isKnown = true;
-                        break;
-                    }
+            if (state.orbPredictionEnabled) {
+                state.hasTouchedOrb = true;
+                if (state.firstOrbTouchTick < 0) {
+                    state.firstOrbTouchTick = state.simulationTick;
+                    state.firstOrbRingObject = ringObject;
+                    state.firstOrbPlayerObject = playerObject;
+                    state.orbTouchDistanceSquared = orbDistanceSq(playerObject, ringObject);
+                    state.orbCloseSampleTick = state.simulationTick;
+                    state.orbCloseDistanceSquared = state.orbTouchDistanceSquared;
                 }
-                if (!isKnown) {
-                    float touchDistanceSquared = orbDistanceSq(playerObject, ringObject);
-                    ProbeOrb newProbe;
-                    newProbe.ringObject = ringObject;
-                    newProbe.playerObject = playerObject;
-                    newProbe.touchDistanceSquared = touchDistanceSquared;
-                    newProbe.closeDistanceSquared = touchDistanceSquared;
-                    newProbe.touchSampleTick = state.simulationTick;
-                    newProbe.closeSampleTick = state.simulationTick;
-                    state.probeOrbCandidates.push_back(newProbe);
+
+                if (state.isProbing) {
+                    bool isKnown = false;
+                    for (auto const& existingProbe : state.probeOrbCandidates) {
+                        if (existingProbe.ringObject == ringObject) {
+                            isKnown = true;
+                            break;
+                        }
+                    }
+                    if (!isKnown) {
+                        float touchDistanceSquared = orbDistanceSq(playerObject, ringObject);
+                        ProbeOrb newProbe;
+                        newProbe.ringObject = ringObject;
+                        newProbe.playerObject = playerObject;
+                        newProbe.touchDistanceSquared = touchDistanceSquared;
+                        newProbe.closeDistanceSquared = touchDistanceSquared;
+                        newProbe.touchSampleTick = state.simulationTick;
+                        newProbe.closeSampleTick = state.simulationTick;
+                        state.probeOrbCandidates.push_back(newProbe);
+                    }
                 }
             }
         }
