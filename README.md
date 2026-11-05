@@ -142,7 +142,7 @@ this is a cheat. it changes input timing so your runs are not legit. dont use it
 
 ## prediction controls
 
-- **Orb Prediction** is on by default. Turn it off in the in-game Settings tab or Geode mod settings to skip orb alignment, extra orb-hit/timing candidates, and orb-specific verification. Normal input-delay prediction remains active, and real in-game orb behavior is unchanged.
+- **Orb Prediction** is off by default. Turn it on in the in-game Settings tab or Geode mod settings to skip orb alignment, extra orb-hit/timing candidates, and orb-specific verification. Normal input-delay prediction remains active, and real in-game orb behavior is unchanged.
 
 ## prediction feedback
 
