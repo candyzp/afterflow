@@ -50,6 +50,8 @@ jobs:
     name: Package builds
     runs-on: ubuntu-latest
     needs: ['build']
+    permissions:
+      contents: write
     if: ${{ !cancelled() }}
 
     steps:
@@ -64,6 +66,41 @@ jobs:
 
       - name: Verify the package uses iOS-readable compression
         run: python3 tools/check-geode-compression.py "${{ steps.build.outputs.build-output }}"
+
+      # Publish only after every platform build succeeds. The mod checks
+      # version.txt for the newest version and downloads this release asset.
+      - name: Publish versioned update
+        if: ${{ needs.build.result == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_OUTPUT: ${{ steps.build.outputs.build-output }}
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < version.txt)"
+          MOD_VERSION="$(python3 -c 'import json; print(json.load(open("mod.json"))["version"])')"
+          CMAKE_VERSION="$(python3 -c 'import re; s=open("CMakeLists.txt").read(); m=re.search(r"project\\(Afterflow VERSION ([^)]+)\\)", s); print(m.group(1) if m else "")')"
+
+          if [[ -z "$VERSION" || "$VERSION" != "$MOD_VERSION" || "$VERSION" != "$CMAKE_VERSION" ]]; then
+            echo "Version mismatch: version.txt=$VERSION, mod.json=$MOD_VERSION, CMakeLists.txt=$CMAKE_VERSION" >&2
+            exit 1
+          fi
+          if [[ ! -s "$BUILD_OUTPUT" ]]; then
+            echo "Combined .geode package is missing: $BUILD_OUTPUT" >&2
+            exit 1
+          fi
+
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            ASSET_NAME="$(basename "$BUILD_OUTPUT")"
+            if gh release view "$VERSION" --json assets --jq '.assets[].name' | grep -Fxq "$ASSET_NAME"; then
+              echo "Release $VERSION already contains $ASSET_NAME; leaving it unchanged."
+            else
+              gh release upload "$VERSION" "$BUILD_OUTPUT" --clobber
+            fi
+          else
+            gh release create "$VERSION" "$BUILD_OUTPUT" \
+              --title "Afterflow v$VERSION" \
+              --notes "Automated release of Afterflow v$VERSION from commit $GITHUB_SHA."
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
