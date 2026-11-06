@@ -78,7 +78,7 @@ jobs:
           set -euo pipefail
           VERSION="$(tr -d '[:space:]' < version.txt)"
           MOD_VERSION="$(python3 -c 'import json; print(json.load(open("mod.json"))["version"])')"
-          CMAKE_VERSION="$(python3 -c 'import re; s=open("CMakeLists.txt").read(); m=re.search(r"project\\(Afterflow VERSION ([^)]+)\\)", s); print(m.group(1) if m else "")')"
+                    CMAKE_VERSION="$(python3 -c 'import re; s=open("CMakeLists.txt").read(); m=re.search(r"project\(Afterflow VERSION ([^)]+)\)", s); print(m.group(1) if m else "")')"
 
           if [[ -z "$VERSION" || "$VERSION" != "$MOD_VERSION" || "$VERSION" != "$CMAKE_VERSION" ]]; then
             echo "Version mismatch: version.txt=$VERSION, mod.json=$MOD_VERSION, CMakeLists.txt=$CMAKE_VERSION" >&2
