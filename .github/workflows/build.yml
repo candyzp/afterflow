@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - upstream-fixes-2026-11-09
 
 permissions:
   contents: read
