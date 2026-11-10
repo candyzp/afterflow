@@ -6577,7 +6577,6 @@ finally {
 
         bool isSecondPlayer = isDual && state.ghostPlayer2 && player2;
         bool const trackOrbPrediction = state.orbPredictionEnabled;
-        bool const trackOrbProbing = trackOrbPrediction && state.isProbing;
         state.hasRealRectangle = state.ignoreTouchingObjects;
         state.harmlessObjects.clear();
         if (state.hasRealRectangle) {
@@ -6682,7 +6681,7 @@ finally {
                     state.orbCloseSampleTick = state.simulationTick;
                 }
             }
-            if (trackOrbProbing) {
+            if (trackOrbPrediction && state.isProbing) {
                 for (auto& probeOrb : state.probeOrbCandidates) {
                     float probeDistanceSquared = orbDistanceSq(probeOrb.playerObject, probeOrb.ringObject);
                     if (probeDistanceSquared < probeOrb.closeDistanceSquared) {
