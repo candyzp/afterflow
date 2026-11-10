@@ -12,28 +12,40 @@ BINARIES = [
 
 
 def check(path: Path) -> bool:
-    with zipfile.ZipFile(path) as archive:
-        names = set(archive.namelist())
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = set(archive.namelist())
+    except (OSError, zipfile.BadZipFile) as error:
+        print(f"{path}: BAD - cannot read package: {error}")
+        return False
+
     missing = [binary for binary in BINARIES if binary not in names]
     if missing:
         print(f"{path}: BAD - missing {', '.join(missing)}")
         return False
+
     print(f"{path}: ok - {len(BINARIES)} platform binaries present")
     return True
 
 
 def main(argv):
     if len(argv) < 2:
-        print("usage: check-geode-platforms.py <package-or-directory>")
+        print("usage: check-geode-platforms.py <package-or-directory> [...]")
         return 2
+
     targets = []
     for argument in argv[1:]:
         path = Path(argument)
-        targets.extend(sorted(path.rglob("*.geode")) if path.is_dir() else [path])
+        if path.is_dir():
+            targets.extend(sorted(path.rglob("*.geode")))
+        else:
+            targets.append(path)
+
     if not targets:
         print("no .geode files found")
         return 1
-    results = [check(target) for target in targets if target.exists()]
+
+    results = [check(target) for target in targets]
     return 0 if all(results) else 1
 
 
