@@ -84,20 +84,31 @@ jobs:
             echo "Version mismatch: version.txt=$VERSION, mod.json=$MOD_VERSION, CMakeLists.txt=$CMAKE_VERSION" >&2
             exit 1
           fi
-          if [[ ! -s "$BUILD_OUTPUT" ]]; then
-            echo "Combined .geode package is missing: $BUILD_OUTPUT" >&2
+          if [[ ! -d "$BUILD_OUTPUT" ]]; then
+            echo "Combined .geode package directory is missing: $BUILD_OUTPUT" >&2
+            exit 1
+          fi
+
+          mapfile -t PACKAGE_FILES < <(find "$BUILD_OUTPUT" -maxdepth 1 -type f -name '*.geode' -print)
+          if [[ ${#PACKAGE_FILES[@]} -ne 1 ]]; then
+            echo "Expected exactly one .geode package in $BUILD_OUTPUT; found ${#PACKAGE_FILES[@]}." >&2
+            exit 1
+          fi
+          PACKAGE_FILE="${PACKAGE_FILES[0]}"
+          if [[ ! -s "$PACKAGE_FILE" ]]; then
+            echo "Combined .geode package is empty: $PACKAGE_FILE" >&2
             exit 1
           fi
 
           if gh release view "$VERSION" >/dev/null 2>&1; then
-            ASSET_NAME="$(basename "$BUILD_OUTPUT")"
+            ASSET_NAME="$(basename "$PACKAGE_FILE")"
             if gh release view "$VERSION" --json assets --jq '.assets[].name' | grep -Fxq "$ASSET_NAME"; then
               echo "Release $VERSION already contains $ASSET_NAME; leaving it unchanged."
             else
-              gh release upload "$VERSION" "$BUILD_OUTPUT" --clobber
+              gh release upload "$VERSION" "$PACKAGE_FILE" --clobber
             fi
           else
-            gh release create "$VERSION" "$BUILD_OUTPUT" \
+            gh release create "$VERSION" "$PACKAGE_FILE" \
               --title "Afterflow v$VERSION" \
               --notes "Automated release of Afterflow v$VERSION from commit $GITHUB_SHA."
           fi
