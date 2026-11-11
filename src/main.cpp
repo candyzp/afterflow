@@ -449,158 +449,6 @@ namespace {
         int closeSampleTick = -1;
     };
 
-    // Simulation runs many candidate timelines for one click. These sets are
-    // cleared between timelines, so a normal unordered_set repeatedly frees
-    // and reallocates nodes for the same level objects. Epochs keep those nodes
-    // alive for the level and make per-simulation clear O(1).
-    // Reusable pointer set for simulation bookkeeping. The sets are queried
-    // from every simulated collision tick, so keep their storage flat and
-    // preallocated: unlike unordered_map this avoids one heap node per object
-    // and improves pointer-lookup locality in the prediction hot path.
-    class ObjectEpochSet {
-        struct Entry {
-            GameObject* object = nullptr;
-            std::uint32_t epoch = 0;
-        };
-
-        std::vector<Entry> m_entries;
-        std::uint32_t m_epoch = 1;
-        size_t m_keyCount = 0;
-        size_t m_activeCount = 0;
-
-        static size_t hashObject(GameObject* object) {
-            auto address = reinterpret_cast<std::uintptr_t>(object);
-            address >>= 4;
-            if constexpr (sizeof(std::uintptr_t) == 8) {
-                std::uint64_t value = static_cast<std::uint64_t>(address);
-                value ^= value >> 33;
-                value *= 0xff51afd7ed558ccdULL;
-                value ^= value >> 33;
-                value *= 0xc4ceb9fe1a85ec53ULL;
-                value ^= value >> 33;
-                return static_cast<size_t>(value);
-            }
-            else {
-                std::uint32_t value = static_cast<std::uint32_t>(address);
-                value ^= value >> 16;
-                value *= 0x7feb352dU;
-                value ^= value >> 15;
-                value *= 0x846ca68bU;
-                value ^= value >> 16;
-                return static_cast<size_t>(value);
-            }
-        }
-
-        void rehash(size_t capacity) {
-            std::vector<Entry> replacement(capacity);
-            size_t const mask = capacity - 1;
-            for (auto const& entry : m_entries) {
-                if (!entry.object) {
-                    continue;
-                }
-                size_t index = hashObject(entry.object) & mask;
-                while (replacement[index].object) {
-                    index = (index + 1) & mask;
-                }
-                replacement[index] = entry;
-            }
-            m_entries.swap(replacement);
-        }
-
-    public:
-        bool contains(GameObject* object) const {
-            if (!object || m_entries.empty()) {
-                return false;
-            }
-            size_t const mask = m_entries.size() - 1;
-            size_t index = hashObject(object) & mask;
-            for (size_t probes = 0; probes < m_entries.size(); ++probes) {
-                auto const& entry = m_entries[index];
-                if (!entry.object) {
-                    return false;
-                }
-                if (entry.object == object) {
-                    return entry.epoch == m_epoch;
-                }
-                index = (index + 1) & mask;
-            }
-            return false;
-        }
-
-        void insert(GameObject* object) {
-            if (!object) {
-                return;
-            }
-            if (m_entries.empty()) {
-                reserve(128);
-            }
-            if ((m_keyCount + 1) * 10 >= m_entries.size() * 7) {
-                rehash(m_entries.size() * 2);
-            }
-
-            size_t const mask = m_entries.size() - 1;
-            size_t index = hashObject(object) & mask;
-            for (size_t probes = 0; probes < m_entries.size(); ++probes) {
-                auto& entry = m_entries[index];
-                if (!entry.object) {
-                    entry.object = object;
-                    entry.epoch = m_epoch;
-                    ++m_keyCount;
-                    ++m_activeCount;
-                    return;
-                }
-                if (entry.object == object) {
-                    if (entry.epoch != m_epoch) {
-                        entry.epoch = m_epoch;
-                        ++m_activeCount;
-                    }
-                    return;
-                }
-                index = (index + 1) & mask;
-            }
-
-            // Defensive fallback; the load-factor check above should make this
-            // unreachable, but never silently lose a membership insertion.
-            rehash(m_entries.size() * 2);
-            insert(object);
-        }
-
-        void clear() {
-            ++m_epoch;
-            if (m_epoch == 0) {
-                for (auto& entry : m_entries) {
-                    entry.epoch = 0;
-                }
-                m_epoch = 1;
-            }
-            m_activeCount = 0;
-        }
-
-        void reset() {
-            for (auto& entry : m_entries) {
-                entry = {};
-            }
-            m_epoch = 1;
-            m_keyCount = 0;
-            m_activeCount = 0;
-        }
-
-        void reserve(size_t count) {
-            size_t capacity = 64;
-            size_t const wanted = count * 2;
-            while (capacity < wanted) {
-                capacity *= 2;
-            }
-            if (capacity > m_entries.size()) {
-                rehash(capacity);
-            }
-        }
-
-        bool empty() const {
-            return m_activeCount == 0;
-        }
-    };
-
     struct HoldStats {
         int holdSamples[HOLD_SAMPLE_COUNT] = {};
         int sampleCount = 0;
@@ -636,7 +484,7 @@ namespace {
         double userBudgetMilliseconds = 6.0;
         bool automaticBudget = true;
         int keyStates[6] = { 0, 0, 0, 0, 0, 0 };
-        ObjectEpochSet simulationDisabledObjects;
+        std::unordered_set<GameObject*> simulationDisabledObjects;
 
         bool isSimulating = false;
         bool isInjecting = false;
@@ -771,7 +619,7 @@ namespace {
     } state;
 
     void resetSimulationObjectCaches() {
-        state.simulationDisabledObjects.reset();
+        state.simulationDisabledObjects.clear();
         state.harmlessObjects.reset();
         state.usedOrbs.reset();
         state.simulationUsedObjects.reset();
@@ -6502,7 +6350,7 @@ finally {
     int simulate(PlayLayer* gameLayer, PlayerObject* player1, PlayerObject* player2, bool isDual, int delayTicks, bool isDown, int horizonTicks, int releaseAfterTicks,
         int stopAtTick, SimEnd* simulationEnd) {
         *simulationEnd = SimEnd::Ok;
-        if (!state.ghostPlayer1) {
+        if (!state.ghostPlayer1 || !player1) {
             return horizonTicks;
         }
         state.isSimulating = true;
@@ -6986,8 +6834,7 @@ finally {
         return false;
     }
 
-    template <class ScoreFunction>
-    int searchSmallest(int horizonTicks, int maxDelayTicks, int baseDelay, int* landingTick, ScoreFunction const& scoreFunction,
+    int searchSmallest(int horizonTicks, int maxDelayTicks, int baseDelay, int* landingTick, std::function<int(int, int, SimEnd*)> const& scoreFunction,
         double budgetMilliseconds = -1.0, bool isQuiet = false, bool needsFullSearch = false) {
         if (budgetMilliseconds < 0.0) {
             budgetMilliseconds = state.budgetMilliseconds;
@@ -7025,8 +6872,7 @@ finally {
         return 0;
     }
 
-    template <class ScoreFunction>
-    int searchTwoPass(int horizonTicks, int maxDelayTicks, int baseDelay, int* landingTick, ScoreFunction const& scoreFunction,
+    int searchTwoPass(int horizonTicks, int maxDelayTicks, int baseDelay, int* landingTick, std::function<int(int, int, SimEnd*)> const& scoreFunction,
         bool needsFullSearch = false) {
         isQuickScore = true;
         int candidateDelay = searchSmallest(horizonTicks, maxDelayTicks, baseDelay, landingTick, scoreFunction, state.budgetMilliseconds * 0.5, true, needsFullSearch);
@@ -8188,9 +8034,6 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
         }
 
         uint64_t keptTypesMask = state.smartEnabled ? (COLLIDING_OBJECT_TYPES | INTERACTABLE_OBJECT_TYPES) : COLLIDING_OBJECT_TYPES;
-        bool const hasDisabledObjects = !state.simulationDisabledObjects.empty();
-        bool hasHarmlessObjects = !state.harmlessObjects.empty();
-        bool const hasRealRectangle = state.hasRealRectangle;
         bool hasRectangle = false;
         CCRect ghostRectangle;
         auto& objectList = *gameObjects;
@@ -8203,18 +8046,17 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             uint64_t typeBitMask = objectType < 64 ? (1ull << objectType) : 0;
             if (keptTypesMask & typeBitMask) {
 
-                if (hasDisabledObjects && state.simulationDisabledObjects.contains(gameObject)) {
+                if (!state.simulationDisabledObjects.empty() && state.simulationDisabledObjects.contains(gameObject)) {
                     continue;
                 }
-                if (hasRealRectangle && (typeBitMask & HAZARD_OBJECT_TYPES)) {
-                    if (hasHarmlessObjects && state.harmlessObjects.contains(gameObject)) {
+                if (state.hasRealRectangle && (typeBitMask & HAZARD_OBJECT_TYPES)) {
+                    if (!state.harmlessObjects.empty() && state.harmlessObjects.contains(gameObject)) {
                         continue;
                     }
                     if (state.simulationTick <= 1) {
                         auto const& rectangle = gameObject->getObjectRect();
                         if (rectangle.intersectsRect(state.realRectanglePlayer1) || rectangle.intersectsRect(state.realRectanglePlayer2)) {
                             state.harmlessObjects.insert(gameObject);
-                            hasHarmlessObjects = true;
                             continue;
                         }
                     }
