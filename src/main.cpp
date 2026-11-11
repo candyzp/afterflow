@@ -539,7 +539,7 @@ namespace {
         bool ignoreTouchingObjects = true;
         bool hasRealRectangle = false;
         CCRect realRectanglePlayer1, realRectanglePlayer2;
-        ObjectEpochSet harmlessObjects;
+        std::unordered_set<GameObject*> harmlessObjects;
         int baseEscapeTicks = -1;
         int baseCrashTicks = -1;
 
@@ -571,7 +571,7 @@ namespace {
         float tickDeltaX = 0.f;
         bool dashAutoReleaseEnabled = false;
         bool autoDashEnabled = false;
-        ObjectEpochSet usedOrbs;
+        std::unordered_set<GameObject*> usedOrbs;
         bool moreTimeEnabled = true;
         bool ballSmartEnabled = true;
         bool swingSmartEnabled = true;
@@ -614,15 +614,15 @@ namespace {
         CCDrawNode* pathDrawNode = nullptr;
         int pathHoldUntilTick = 0;
 
-        ObjectEpochSet simulationUsedObjects;
+        std::unordered_set<GameObject*> simulationUsedObjects;
         std::vector<ObjSnapshot> objectSnapshots;
     } state;
 
     void resetSimulationObjectCaches() {
         state.simulationDisabledObjects.clear();
-        state.harmlessObjects.reset();
-        state.usedOrbs.reset();
-        state.simulationUsedObjects.reset();
+        state.harmlessObjects.clear();
+        state.usedOrbs.clear();
+        state.simulationUsedObjects.clear();
 
         // Warm the hash tables outside the live prediction/touch path.
         state.simulationDisabledObjects.reserve(128);
