@@ -1807,7 +1807,7 @@ finally {
 
     void showUpdateOverlay() {
         auto* scene = cocos2d::CCScene::get();
-        if (!scene || updateOverlay.layer) {
+        if (!scene || typeinfo_cast<CCTransitionScene*>(scene) || updateOverlay.layer) {
             return;
         }
         auto* layer = UpdateOverlayLayer::create();
@@ -3370,6 +3370,7 @@ finally {
         void removePauseLayers();
         void updateHints();
         void tickRefresh(float dt);
+        void popupTick(float dt);
 
         CCLayerColor* m_scrim = nullptr;
         CCNodeRGBA* m_deck = nullptr;
@@ -3482,6 +3483,7 @@ finally {
         CCPoint m_launcherDragOffset;
         float m_deckScale = 1.f;
         bool m_isOpen = false;
+        bool m_popupHidden = false;
         bool m_didPauseForPanel = false;
         bool m_isDraggingLauncher = false;
         bool m_launcherMoved = false;
@@ -4634,10 +4636,36 @@ finally {
         }
     }
 
+    void AfterflowOverlay::popupTick(float) {
+        auto* scene = CCScene::get();
+        bool popupOpen = false;
+        if (scene) {
+            auto* children = scene->getChildren();
+            for (unsigned int index = 0; children && index < children->count(); ++index) {
+                auto* node = typeinfo_cast<CCNode*>(children->objectAtIndex(index));
+                if (node && node != this && node->isVisible() && typeinfo_cast<FLAlertLayer*>(node)) {
+                    popupOpen = true;
+                    break;
+                }
+            }
+        }
+        if (popupOpen == m_popupHidden) {
+            return;
+        }
+        m_popupHidden = popupOpen;
+        setVisible(!popupOpen);
+        setTouchEnabled(!popupOpen && isMobileHost());
+    }
+
     void AfterflowOverlay::onEnter() {
+        if (!isMobileHost()) {
+            setMouseEnabled(true);
+        }
         CCLayer::onEnter();
         layout();
         refresh();
+        unschedule(schedule_selector(AfterflowOverlay::popupTick));
+        schedule(schedule_selector(AfterflowOverlay::popupTick), 0.15f);
         if (m_deck && !m_isOpen) {
             m_deck->setVisible(false);
         }
@@ -4657,6 +4685,7 @@ finally {
         m_pressedNode = nullptr;
         unschedule(schedule_selector(AfterflowOverlay::tickRefresh));
         unschedule(schedule_selector(AfterflowOverlay::animTick));
+        unschedule(schedule_selector(AfterflowOverlay::popupTick));
         CCLayer::onExit();
     }
 
@@ -5962,7 +5991,7 @@ finally {
     }
 
     void buildAfterflowOverlay(CCScene* scene) {
-        if (!scene || scene->getChildByType<AfterflowOverlay>(0)) {
+        if (!scene || scene->getChildByType<AfterflowOverlay>(0) || typeinfo_cast<CCTransitionScene*>(scene)) {
             return;
         }
         static bool announcedBuild = false;
@@ -5984,17 +6013,29 @@ finally {
         }
     }
 
+    void queueOverlayBuild(int attempts) {
+        Loader::get()->queueInMainThread([attempts] {
+            auto* runningScene = CCScene::get();
+            if (!runningScene) {
+                return;
+            }
+            if (typeinfo_cast<CCTransitionScene*>(runningScene)) {
+                if (attempts < 120) {
+                    queueOverlayBuild(attempts + 1);
+                }
+                return;
+            }
+            buildAfterflowOverlay(runningScene);
+        });
+    }
+
     void attachAfterflowOverlay(CCScene* scene) {
         if (!scene || scene->getChildByType<AfterflowOverlay>(0)) {
             return;
         }
-        // SceneEvent is sent from CCDirector::willSwitchToScene. Constructing
-        // fonts, sprites and GL-backed nodes in that transition callback can
-        // crash iOS. Defer construction to the next main-thread tick and attach
-        // to whichever scene is actually running then.
-        Loader::get()->queueInMainThread([] {
-            buildAfterflowOverlay(CCScene::get());
-        });
+        // SceneEvent is sent from CCDirector::willSwitchToScene. Defer construction
+        // until the transition scene has finished and the actual game scene is active.
+        queueOverlayBuild(0);
     }
 
     void ensureAfterflowOverlay() {
@@ -6016,7 +6057,7 @@ finally {
 
     void toggleAfterflowPanel() {
         auto* scene = CCScene::get();
-        if (!scene) {
+        if (!scene || typeinfo_cast<CCTransitionScene*>(scene)) {
             return;
         }
         auto* overlay = scene->getChildByType<AfterflowOverlay>(0);
@@ -6053,9 +6094,15 @@ finally {
     PlayerObject* makeGhost(PlayLayer* gameLayer) {
         if (!state.ghostRenderLayer) {
             state.ghostRenderLayer = CCLayer::create();
+            if (!state.ghostRenderLayer) {
+                return nullptr;
+            }
             state.ghostRenderLayer->retain();
         }
         auto* ghostPlayer = PlayerObject::create(1, 1, gameLayer, state.ghostRenderLayer, true);
+        if (!ghostPlayer) {
+            return nullptr;
+        }
         ghostPlayer->retain();
         ghostPlayer->setPosition(CCPoint(0.f, 105.f));
         ghostPlayer->setVisible(false);
@@ -6318,11 +6365,20 @@ finally {
         ghostPlayer->updateRotation(deltaTime);
     }
 
+    void clearCollisionLog(CCDictionary* log) {
+        if (log) {
+            log->removeAllObjects();
+        }
+    }
+
     void checkGhost(PlayLayer* gameLayer, PlayerObject* ghostPlayer, float deltaTime) {
-        ghostPlayer->m_collisionLogTop->removeAllObjects();
-        ghostPlayer->m_collisionLogBottom->removeAllObjects();
-        ghostPlayer->m_collisionLogLeft->removeAllObjects();
-        ghostPlayer->m_collisionLogRight->removeAllObjects();
+        if (!gameLayer || !ghostPlayer) {
+            return;
+        }
+        clearCollisionLog(ghostPlayer->m_collisionLogTop);
+        clearCollisionLog(ghostPlayer->m_collisionLogBottom);
+        clearCollisionLog(ghostPlayer->m_collisionLogLeft);
+        clearCollisionLog(ghostPlayer->m_collisionLogRight);
         gameLayer->checkCollisions(ghostPlayer, deltaTime, false);
     }
 
@@ -7547,10 +7603,18 @@ class $modify(BufPlayLayer, PlayLayer) {
         readSettings();
         preloadPredictionBeep();
         applyStage();
-        state.ghostPlayer1 = makeGhost(this);
-        state.ghostPlayer2 = makeGhost(this);
-        state.ghostLayerBaseIndex = state.ghostRenderLayer->getChildrenCount();
-        say("buffer ready | {} | {} cycles", stageText(), stageKey());
+        auto* ghost1 = makeGhost(this);
+        auto* ghost2 = makeGhost(this);
+        if (!ghost1 || !ghost2 || !state.ghostRenderLayer) {
+            dropGhosts();
+            log::warn("afterflow: could not create buffer players, buffering disabled for this level");
+        }
+        else {
+            state.ghostPlayer1 = ghost1;
+            state.ghostPlayer2 = ghost2;
+            state.ghostLayerBaseIndex = state.ghostRenderLayer->getChildrenCount();
+            say("buffer ready | {} | {} cycles", stageText(), stageKey());
+        }
         checkForUpdates(false);
         state.hasRealInput = false;
         state.hasAppliedInput = false;
@@ -7562,6 +7626,12 @@ class $modify(BufPlayLayer, PlayLayer) {
         resetPending();
         scheduleAfterflowOverlay(this);
         return true;
+    }
+
+    void onExit() {
+        resetPending();
+        dropGhosts();
+        PlayLayer::onExit();
     }
 
     void onQuit() {

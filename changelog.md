@@ -1,4 +1,12 @@
-# v2.4.4
+# unreleased
+
+- **scene lifecycle safety**: defer the control-panel overlay until scene transitions finish; update overlays and panel toggles now avoid transition scenes.
+- **mobile popup handling**: hide the Afterflow overlay and disable its touch handling while a Geometry Dash popup is open.
+- **ghost lifecycle safety**: release ghost players from PlayLayer::onExit, guard ghost allocation failures, and tolerate missing collision-log dictionaries instead of dereferencing null pointers.
+- **build validation**: verify the combined .geode contains every Windows, macOS, Android 32/64-bit, and iOS binary.
+- **iOS signing**: ad-hoc sign the linked iOS dylib while retaining the fork's Geode 5.11.2 FMOD bindings workaround.
+
+# v2.4.5
 
 - **iOS crash fix**: defer overlay/font/sprite construction out of the scene-transition callback and build it on the next main-thread tick.
 - **iOS lifecycle safety**: defer the pause-menu button action until the touch dispatcher has finished; move the startup version check until the menu is ready.
