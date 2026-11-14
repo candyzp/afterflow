@@ -1,11 +1,3 @@
-# v2.4.6
-
-- **orb isolation**: when Orb Prediction is off, optional jump rings are removed from ghost collision candidates and their ring-touch/ring-jump path is skipped. Pads, portals and contact-triggered dash rings remain active.
-- **prediction responsiveness**: stop an over-budget ghost simulation inside its physics loop, restore snapshots, and pass the real input through instead of allowing one long simulation to hitch the frame.
-- **stronger default buffer**: untouched default stage moves from 2/2 ticks to 4/4 ticks (one frame at 60 FPS); existing custom stage choices are retained.
-- **diagnostics**: optional bounded performance trace records per-input timing, simulation runs/ticks, collision-object volume, orb contacts, outcomes and frame gaps. POSIX fatal-signal handler preserves the recent event ring in the mod save folder.
-- **logging control**: new Disable diagnostic logs setting suppresses activity/performance logs while leaving prediction stats and the minimal crash detector active.
-
 # v2.4.4
 
 - **iOS crash fix**: defer overlay/font/sprite construction out of the scene-transition callback and build it on the next main-thread tick.

@@ -7325,8 +7325,9 @@ finally {
         if (state.predictionBudgetExceeded || simulationEnd == SimEnd::StopSearch) {
             state.lastInputOutcome = state.predictionBudgetExceeded ? "budget-exhausted" : "base-simulation-stopped";
             double elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - clickStartTime).count();
-            recordLevelPrediction(state.predictionBudgetExceeded ? PredictionOutcome::BudgetExceeded : PredictionOutcome::NoSave,
-                isDown, predictionMode, playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
+            recordLevelPrediction(isDown, predictionMode,
+                state.predictionBudgetExceeded ? PredictionOutcome::BudgetExceeded : PredictionOutcome::NoSave,
+                playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
             state.hasAppliedInput = isDown;
             return false;
         }
@@ -7380,8 +7381,9 @@ finally {
             double elapsedMs = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - clickStartTime
             ).count();
-            recordLevelPrediction(state.predictionBudgetExceeded ? PredictionOutcome::BudgetExceeded : PredictionOutcome::NoSave,
-                isDown, predictionMode, playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
+            recordLevelPrediction(isDown, predictionMode,
+                state.predictionBudgetExceeded ? PredictionOutcome::BudgetExceeded : PredictionOutcome::NoSave,
+                playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
             say("no save: {}{} dies in {}t (max {}t, best +{}t -> {}t of {})", isDown ? "press" : "release", tickTagText, baseDelay, maxDelayTicks,
                 debugBestDelay, debugBestResult, horizonTicks);
             state.hasAppliedInput = isDown;
@@ -7397,7 +7399,7 @@ finally {
             if (state.predictionBudgetExceeded) {
                 state.lastInputOutcome = "budget-exhausted-verification";
                 double elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - clickStartTime).count();
-                recordLevelPrediction(PredictionOutcome::BudgetExceeded, isDown, predictionMode,
+                recordLevelPrediction(isDown, predictionMode, PredictionOutcome::BudgetExceeded,
                     playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
                 state.hasAppliedInput = isDown;
                 return false;
