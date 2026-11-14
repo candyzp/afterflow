@@ -21,6 +21,7 @@
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/RingObject.hpp>
+#include "diagnostics.hpp"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -64,6 +65,8 @@ namespace {
     constexpr size_t RECENT_LOG_CAPACITY = 64;
     std::mutex g_recentLogMutex;
     std::deque<std::string> g_recentLog;
+    bool g_performanceDiagnosticsEnabled = false;
+    bool g_disableLogs = false;
 
     constexpr size_t PREDICTION_HISTORY_CAPACITY = 24;
 
@@ -72,7 +75,7 @@ namespace {
     };
 
     enum class PredictionOutcome : std::uint8_t {
-        Saved, OrbAligned, Safe, NoSave, OrbRejected, LateCrash
+        Saved, OrbAligned, Safe, NoSave, OrbRejected, LateCrash, BudgetExceeded
     };
 
     struct PredictionRecord {
@@ -96,6 +99,7 @@ namespace {
         std::uint64_t noSaves = 0;
         std::uint64_t orbRejections = 0;
         std::uint64_t lateCrashSkips = 0;
+        std::uint64_t budgetAborts = 0;
         std::uint64_t totalSavedTicks = 0;
         double totalPredictionMilliseconds = 0.0;
         double peakPredictionMilliseconds = 0.0;
@@ -152,6 +156,7 @@ namespace {
             case PredictionOutcome::NoSave: return "NO SAVE";
             case PredictionOutcome::OrbRejected: return "ORB REJECT";
             case PredictionOutcome::LateCrash: return "LATE SKIP";
+            case PredictionOutcome::BudgetExceeded: return "BUDGET";
             default: return "UNKNOWN";
         }
     }
@@ -194,6 +199,9 @@ namespace {
             case PredictionOutcome::LateCrash:
                 ++cache.lateCrashSkips;
                 break;
+            case PredictionOutcome::BudgetExceeded:
+                ++cache.budgetAborts;
+                break;
         }
 
         auto& record = cache.history[cache.nextHistoryIndex];
@@ -214,9 +222,9 @@ namespace {
         auto const& cache = g_levelPredictionCache;
         std::string report = fmt::format(
             "RAM cache for this level (clears on level exit)\n"
-            "{} predictions | {} saves | {} safe | {} no-save | {} orb rejects | {} late skips\n",
+            "{} predictions | {} saves | {} safe | {} no-save | {} orb rejects | {} late skips | {} budget aborts\n",
             cache.predictions, cache.saves, cache.safeInputs, cache.noSaves,
-            cache.orbRejections, cache.lateCrashSkips
+            cache.orbRejections, cache.lateCrashSkips, cache.budgetAborts
         );
 
         if (cache.predictions > 0) {
@@ -279,6 +287,15 @@ namespace {
         typeBit(GameObjectType::DashRing) | typeBit(GameObjectType::GravityDashRing) | typeBit(GameObjectType::SpiderOrb) |
         typeBit(GameObjectType::InverseGravityPortal) | typeBit(GameObjectType::NormalGravityPortal) |
         typeBit(GameObjectType::GravityTogglePortal);
+
+    // Jump orbs are optional prediction work. Dash rings stay enabled because they
+    // trigger from contact and are not an optional click-orb choice.
+    constexpr uint64_t JUMP_ORB_OBJECT_TYPES =
+        typeBit(GameObjectType::YellowJumpRing) | typeBit(GameObjectType::PinkJumpRing) |
+        typeBit(GameObjectType::RedJumpRing) | typeBit(GameObjectType::GravityRing) |
+        typeBit(GameObjectType::GreenRing) | typeBit(GameObjectType::DropRing) |
+        typeBit(GameObjectType::CustomRing) | typeBit(GameObjectType::SpiderOrb);
+    constexpr size_t MAX_PROBE_ORB_CANDIDATES = 16;
 
     constexpr uint64_t MODE_PORTAL_OBJECT_TYPES =
         typeBit(GameObjectType::ShipPortal) | typeBit(GameObjectType::CubePortal) | typeBit(GameObjectType::BallPortal) |
@@ -487,6 +504,8 @@ namespace {
         std::unordered_set<GameObject*> simulationDisabledObjects;
 
         bool isSimulating = false;
+        bool isInputDecisionActive = false;
+        bool predictionBudgetExceeded = false;
         bool isInjecting = false;
         bool hasGhostDied = false;
         bool hasGhostHitPortal = false;
@@ -537,6 +556,11 @@ namespace {
         bool orbAlignToGround = false;
         bool orbPredictionEnabled = false;
         bool ignoreTouchingObjects = true;
+        const char* lastInputOutcome = "not-run";
+        int lastInputBaseTicks = -1;
+        int lastInputSavedTicks = 0;
+        int lastInputHorizonTicks = 0;
+        int lastInputMaxDelayTicks = 0;
         bool hasRealRectangle = false;
         CCRect realRectanglePlayer1, realRectanglePlayer2;
         std::unordered_set<GameObject*> harmlessObjects;
@@ -564,6 +588,10 @@ namespace {
         bool performanceLogEnabled = false;
         int simulationRunCount = 0;
         long simulatedTickCount = 0;
+        std::uint64_t collisionObjectsScanned = 0;
+        std::uint64_t collisionObjectsKept = 0;
+        std::uint64_t orbTouchCount = 0;
+        bool orbProbeOverflow = false;
         bool clickBetweenFramesSync = true;
         float firstStepScale = 1.f;
         bool isInRealUpdate = false;
@@ -652,6 +680,8 @@ namespace {
     void toggleTerminal();
     void toggleAfterflowPanel();
     std::string stageText();
+
+    double clickMs();
 
     float stepScale() {
         float deltaTime = state.tickLengthSeconds;
@@ -1541,6 +1571,7 @@ finally {
     }
 
     void appendTerminalLog(std::string const& message) {
+        if (g_disableLogs) return;
         pushRecentLog(message);
         if (isMobileHost()) {
             return;
@@ -2447,7 +2478,7 @@ finally {
     void readSettings() {
         state.smartEnabled = true;
         state.budgetMilliseconds = 8.0;
-        state.automaticBudget = false;
+        state.automaticBudget = true;
         state.practiceModeOnly = false;
         state.groundHorizonTicks = 130;
         state.waveHorizonTicks = 65;
@@ -2476,7 +2507,7 @@ finally {
         state.heatmapEnabled = false;
         state.moreTimeEnabled = false;
         state.dashAutoReleaseEnabled = false;
-        state.performanceLogEnabled = false;
+        state.performanceLogEnabled = g_performanceDiagnosticsEnabled && !g_disableLogs;
         state.shipBufferEnabled = true;
         state.lateCrashTicks = 90;
         state.robustSaveMode = false;
@@ -5885,6 +5916,9 @@ finally {
         }
         text += '\n';
         text += levelPredictionReport(PREDICTION_HISTORY_CAPACITY);
+        text += "\n===== PERSISTED PERFORMANCE / CRASH DIAGNOSTICS =====\n";
+        text += afterflowdiag::exportText();
+        text += fmt::format("\nDiagnostics file: {}\n", afterflowdiag::filePath());
         bool didCopy = geode::utils::clipboard::write(text.c_str());
         if (m_copyLabel) {
             m_copyLabel->stopAllActions();
@@ -6349,7 +6383,12 @@ finally {
 
     int simulate(PlayLayer* gameLayer, PlayerObject* player1, PlayerObject* player2, bool isDual, int delayTicks, bool isDown, int horizonTicks, int releaseAfterTicks,
         int stopAtTick, SimEnd* simulationEnd) {
+        afterflowdiag::ActiveScope diagnosticScope("simulate");
         *simulationEnd = SimEnd::Ok;
+        if (state.isInputDecisionActive && state.predictionBudgetExceeded) {
+            *simulationEnd = SimEnd::StopSearch;
+            return 0;
+        }
         if (!state.ghostPlayer1 || !player1) {
             return horizonTicks;
         }
@@ -6408,8 +6447,15 @@ finally {
         int currentTick = 0;
         bool hasDied = false;
         bool isSafe = false;
+        bool budgetExceeded = false;
+        if (state.isInputDecisionActive) ++state.simulationRunCount;
 
         for (; currentTick < totalTicks; ++currentTick) {
+            if (state.isInputDecisionActive && (currentTick & 3) == 0 && clickMs() >= state.budgetMilliseconds) {
+                budgetExceeded = true;
+                break;
+            }
+            if (state.isInputDecisionActive) ++state.simulatedTickCount;
             state.simulationTick = currentTick;
 
             if (state.autoReleaseTick1 >= 0 && currentTick >= state.autoReleaseTick1) {
@@ -6529,7 +6575,11 @@ finally {
             ++groundedTicks;
         }
 
-        if ((hasDied || state.hasGhostHitPortal) && currentTick < delayTicks) {
+        if (budgetExceeded) {
+            state.predictionBudgetExceeded = true;
+            *simulationEnd = SimEnd::StopSearch;
+        }
+        else if ((hasDied || state.hasGhostHitPortal) && currentTick < delayTicks) {
             *simulationEnd = SimEnd::StopSearch;
         }
         restoreObjects();
@@ -6537,13 +6587,25 @@ finally {
         if (state.ghostPlayer2) {
             state.ghostPlayer2->stopAllActions();
         }
+        if (g_performanceDiagnosticsEnabled && !g_disableLogs) {
+            afterflowdiag::recordf("SIM_END delay=%d down=%d horizon=%d stopAt=%d survived=%d died=%d safe=%d portal=%d steps=%d budgetAbort=%d orbOn=%d orbTouchTick=%d orbUseTick=%d orbCandidates=%zu collisionScanned=%llu collisionKept=%llu",
+                delayTicks, isDown ? 1 : 0, horizonTicks, stopAtTick, survivedTicks, hasDied ? 1 : 0, isSafe ? 1 : 0,
+                state.hasGhostHitPortal ? 1 : 0, currentTick, budgetExceeded ? 1 : 0, trackOrbPrediction ? 1 : 0,
+                state.firstOrbTouchTick, state.orbUseTick, state.probeOrbCandidates.size(),
+                static_cast<unsigned long long>(state.collisionObjectsScanned),
+                static_cast<unsigned long long>(state.collisionObjectsKept));
+        }
         state.isSimulating = false;
-        return isSafe ? horizonTicks : survivedTicks;
+        return budgetExceeded ? 0 : (isSafe ? horizonTicks : survivedTicks);
     }
 
     int simulateOrbs(PlayLayer* gameLayer, PlayerObject* player1, PlayerObject* player2, bool isDual, int delayTicks, bool isDown, int horizonTicks, int releaseAfterTicks,
         int stopAtTick, SimEnd* simulationEnd) {
-        state.orbClickEnabled = state.assumeOrbHits;
+        if (state.isInputDecisionActive && state.predictionBudgetExceeded) {
+            *simulationEnd = SimEnd::StopSearch;
+            return 0;
+        }
+        state.orbClickEnabled = state.assumeOrbHits && state.orbPredictionEnabled;
         state.hasTouchedOrb = false;
         if (!state.orbPredictionEnabled) {
             state.orbClickEnabled = false;
@@ -6551,7 +6613,7 @@ finally {
             return simulate(gameLayer, player1, player2, isDual, delayTicks, isDown, horizonTicks, releaseAfterTicks, stopAtTick, simulationEnd);
         }
         int isFirst = simulate(gameLayer, player1, player2, isDual, delayTicks, isDown, horizonTicks, releaseAfterTicks, stopAtTick, simulationEnd);
-        if (!state.tryBothOrbCandidates || !state.smartEnabled || !state.hasTouchedOrb || isFirst >= stopAtTick) {
+        if (*simulationEnd == SimEnd::StopSearch || !state.tryBothOrbCandidates || !state.smartEnabled || !state.hasTouchedOrb || isFirst >= stopAtTick) {
             return isFirst;
         }
         SimEnd firstSimulationEnd = *simulationEnd;
@@ -6599,6 +6661,7 @@ finally {
     }
 
     int alignOrb(PlayLayer* gameLayer, PlayerObject* player1, PlayerObject* player2, bool isDual, int horizonTicks, int releaseAfterTicks, int learnedDelay, int* landingTick) {
+        if (state.isInputDecisionActive && state.predictionBudgetExceeded) return 0;
         int searchWindowTicks = st(std::clamp(state.orbWindowTicks, 1, 64));
         int foundTick = 0;
         SimEnd simulationEnd;
@@ -6617,6 +6680,7 @@ finally {
         }
 
         state.probeOrbCandidates.clear();
+        state.orbProbeOverflow = false;
         state.isProbing = true;
         state.skipPressHandling = true;
         simulate(gameLayer, player1, player2, isDual, 0, true, searchWindowTicks + 2, -1, searchWindowTicks + 2, &simulationEnd);
@@ -7057,8 +7121,19 @@ finally {
     }
 
     bool intercept(GJBaseGameLayer* baseGameLayer, bool isDown, bool isFirstPlayer) {
+        afterflowdiag::ActiveScope diagnosticScope("intercept");
         clickStartTime = std::chrono::steady_clock::now();
         clickBudget();
+        state.isInputDecisionActive = true;
+        struct DecisionScopeReset {
+            ~DecisionScopeReset() { state.isInputDecisionActive = false; }
+        } decisionScopeReset;
+        state.predictionBudgetExceeded = false;
+        state.lastInputOutcome = "pass-through";
+        state.lastInputBaseTicks = -1;
+        state.lastInputSavedTicks = 0;
+        state.lastInputHorizonTicks = 0;
+        state.lastInputMaxDelayTicks = 0;
         auto* playLayer = GameManager::get()->m_playLayer;
         if (!playLayer) {
             return false;
@@ -7195,7 +7270,10 @@ finally {
             horizonTicks = fullWaveHorizon(isMini);
         }
         int maxDelayTicks = st(hasWave ? state.ticksWaveMode : (hasShip ? std::clamp(state.shipMaxDelayTicks, 0, 16) : state.ticksAllModes));
+        state.lastInputHorizonTicks = horizonTicks;
+        state.lastInputMaxDelayTicks = maxDelayTicks;
         if (maxDelayTicks <= 0) {
+            state.lastInputOutcome = "zero-delay-limit";
             state.hasAppliedInput = isDown;
             return false;
         }
@@ -7211,6 +7289,8 @@ finally {
             int orbLandingTick = 0;
             int candidateDelay = alignOrb(playLayer, player1, player2, isDual, horizonTicks, releaseAfterTicks, 0, &orbLandingTick);
             if (candidateDelay > 0) {
+                state.lastInputOutcome = "orb-aligned";
+                state.lastInputSavedTicks = candidateDelay;
                 double elapsedMs = std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - clickStartTime
                 ).count();
@@ -7241,8 +7321,18 @@ finally {
                  : isShipInput     ? shipScore(playLayer, player1, player2, isDual, 0, isDown, horizonTicks, horizonTicks, &simulationEnd)
                                  : simulateOrbs(playLayer, player1, player2, isDual, 0, isDown, horizonTicks, releaseAfterTicks, horizonTicks, &simulationEnd);
 
+        state.lastInputBaseTicks = baseDelay;
+        if (state.predictionBudgetExceeded || simulationEnd == SimEnd::StopSearch) {
+            state.lastInputOutcome = state.predictionBudgetExceeded ? "budget-exhausted" : "base-simulation-stopped";
+            double elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - clickStartTime).count();
+            recordLevelPrediction(state.predictionBudgetExceeded ? PredictionOutcome::BudgetExceeded : PredictionOutcome::NoSave,
+                isDown, predictionMode, playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
+            state.hasAppliedInput = isDown;
+            return false;
+        }
         std::string tickTagText = midTickFraction > 0.f ? fmt::format(" @{:.2f}", midTickFraction) : std::string();
         if (baseDelay >= horizonTicks) {
+            state.lastInputOutcome = "safe";
             double elapsedMs = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - clickStartTime
             ).count();
@@ -7254,6 +7344,7 @@ finally {
 
         bool isGroundPress = isDown && !hasFlyer && !hasAnyRobot && !hasSpider && !hasWave;
         if (isGroundPress && state.lateCrashTicks > 0 && baseDelay >= st(state.lateCrashTicks) && state.hasBaseTouchedDown) {
+            state.lastInputOutcome = "late-crash-skip";
             double elapsedMs = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - clickStartTime
             ).count();
@@ -7285,11 +7376,12 @@ finally {
                                     isGroundPress);
 
         if (savedTick <= 0) {
+            state.lastInputOutcome = state.predictionBudgetExceeded ? "budget-exhausted" : "no-safe-delay-found";
             double elapsedMs = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - clickStartTime
             ).count();
-            recordLevelPrediction(isDown, predictionMode, PredictionOutcome::NoSave,
-                playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
+            recordLevelPrediction(state.predictionBudgetExceeded ? PredictionOutcome::BudgetExceeded : PredictionOutcome::NoSave,
+                isDown, predictionMode, playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
             say("no save: {}{} dies in {}t (max {}t, best +{}t -> {}t of {})", isDown ? "press" : "release", tickTagText, baseDelay, maxDelayTicks,
                 debugBestDelay, debugBestResult, horizonTicks);
             state.hasAppliedInput = isDown;
@@ -7302,7 +7394,16 @@ finally {
             state.retapTick = -1;
             state.orbClickEnabled = false;
             simulate(playLayer, player1, player2, isDual, savedTick, isDown, verificationHorizonTicks, -1, verificationHorizonTicks, &verificationEnd);
+            if (state.predictionBudgetExceeded) {
+                state.lastInputOutcome = "budget-exhausted-verification";
+                double elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - clickStartTime).count();
+                recordLevelPrediction(PredictionOutcome::BudgetExceeded, isDown, predictionMode,
+                    playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
+                state.hasAppliedInput = isDown;
+                return false;
+            }
             if (state.pressOrbRingObject != state.intendedOrbObject) {
+                state.lastInputOutcome = "orb-rejected";
                 double elapsedMs = std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - clickStartTime
                 ).count();
@@ -7320,6 +7421,8 @@ finally {
         if (isRobotPress) {
             releaseAfterTicks = robotUsedHoldTicks;
         }
+        state.lastInputOutcome = "saved";
+        state.lastInputSavedTicks = savedTick;
         double elapsedMs = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - clickStartTime
         ).count();
@@ -7425,14 +7528,22 @@ finally {
 }
 
 $on_mod(Loaded) {
+    g_performanceDiagnosticsEnabled = Mod::get()->getSettingValue<bool>("performance-diagnostics");
+    g_disableLogs = Mod::get()->getSettingValue<bool>("disable-logs");
+    afterflowdiag::install(Mod::get()->getSaveDir() / "afterflow-performance.log");
+    afterflowdiag::setRecordingEnabled(g_performanceDiagnosticsEnabled && !g_disableLogs);
 
     log::info("afterflow: load start ({})", hostOSName());
-    constexpr int STAGE_SCHEMA_VERSION = 2;
+    constexpr int STAGE_SCHEMA_VERSION = 3;
     int savedStageIndex = std::clamp(Mod::get()->getSavedValue<int>("stage", 0), 0, stageTotalCount() - 1);
-    if (Mod::get()->getSavedValue<int>("stage-schema", 1) < STAGE_SCHEMA_VERSION) {
-        if (savedStageIndex == 6) {
-            savedStageIndex = stageTotalCount() - 1;
-        }
+    int savedStageSchema = Mod::get()->getSavedValue<int>("stage-schema", 1);
+    if (savedStageSchema < 2 && savedStageIndex == 6) {
+        savedStageIndex = stageTotalCount() - 1;
+    }
+    if (savedStageSchema < 3 && savedStageIndex == 0) {
+        savedStageIndex = 1; // 4 ticks = one frame at 60 FPS; a noticeable default buffer.
+    }
+    if (savedStageSchema < STAGE_SCHEMA_VERSION) {
         Mod::get()->setSavedValue("stage", savedStageIndex);
         Mod::get()->setSavedValue("stage-schema", STAGE_SCHEMA_VERSION);
     }
@@ -7473,6 +7584,18 @@ $on_mod(Loaded) {
         }
     });
     (void)orbPredictionListener;
+    static auto performanceDiagnosticsListener = listenForSettingChanges<bool>("performance-diagnostics", [](bool enabled) {
+        g_performanceDiagnosticsEnabled = enabled;
+        state.performanceLogEnabled = enabled && !g_disableLogs;
+        afterflowdiag::setRecordingEnabled(enabled && !g_disableLogs);
+    });
+    static auto disableLogsListener = listenForSettingChanges<bool>("disable-logs", [](bool disabled) {
+        g_disableLogs = disabled;
+        state.performanceLogEnabled = g_performanceDiagnosticsEnabled && !disabled;
+        afterflowdiag::setRecordingEnabled(g_performanceDiagnosticsEnabled && !disabled);
+    });
+    (void)performanceDiagnosticsListener;
+    (void)disableLogsListener;
     static auto primaryColorListener = listenForSettingChanges<ccColor3B>("ui-primary-color", [](ccColor3B) {
         if (auto* overlay = activeAfterflowOverlay()) {
             overlay->rebuildDeck();
@@ -7805,13 +7928,38 @@ class $modify(BufPlayerObject, PlayerObject) {
     }
 
     void update(float deltaTime) {
+        afterflowdiag::ActiveScope diagnosticScope(state.isSimulating ? "PlayerObject::update[simulation]" : "PlayerObject::update[live]");
         if (state.isSimulating) {
             PlayerObject::update(deltaTime);
             return;
         }
         auto* gameLayer = GameManager::get()->m_playLayer;
+        bool isFirstPlayerUpdate = gameLayer && this == gameLayer->m_player1;
+        if (isFirstPlayerUpdate) {
+            static bool hasPreviousUpdate = false;
+            static std::chrono::steady_clock::time_point previousUpdate;
+            auto now = std::chrono::steady_clock::now();
+            if (hasPreviousUpdate && g_performanceDiagnosticsEnabled && !g_disableLogs) {
+                double gapMs = std::chrono::duration<double, std::milli>(now - previousUpdate).count();
+                double expectedMs = std::max(1.0, static_cast<double>(deltaTime) * 1000.0);
+                double thresholdMs = std::max(12.0, expectedMs * 2.5);
+                if (gapMs > thresholdMs) {
+                    afterflowdiag::recordf("FRAME_GAP gapMs=%.2f expectedMs=%.2f thresholdMs=%.2f dt=%.5f tick=%d mode=%s lastOutcome=%s lastBase=%d lastSaved=%d lastSims=%d lastSimTicks=%ld orbOn=%d orbContacts=%llu budgetAbort=%d",
+                        gapMs, expectedMs, thresholdMs, deltaTime, currentTick,
+                        predictionModeName(predictionModeFor(gameLayer->m_player1, gameLayer->m_gameState.m_isDualMode ? gameLayer->m_player2 : nullptr)),
+                        state.lastInputOutcome, state.lastInputBaseTicks, state.lastInputSavedTicks,
+                        state.simulationRunCount, state.simulatedTickCount, state.orbPredictionEnabled ? 1 : 0,
+                        static_cast<unsigned long long>(state.orbTouchCount), state.predictionBudgetExceeded ? 1 : 0);
+                }
+            }
+            previousUpdate = now;
+            hasPreviousUpdate = true;
+        }
         if (gameLayer && this == gameLayer->m_player1 && !gameLayer->m_isPaused) {
             ++currentTick;
+            if (g_performanceDiagnosticsEnabled && !g_disableLogs && currentTick % 120 == 0) {
+                afterflowdiag::flush();
+            }
             if (state.isEnabled) {
                 deliverPending(gameLayer, this);
             }
@@ -7944,7 +8092,7 @@ class $modify(BufPlayerObject, PlayerObject) {
 
     void ringJump(RingObject* ringObject, bool skipCollisionCheck) {
         if (state.isSimulating) {
-            if (!state.smartEnabled || !isGhost(this)) {
+            if (!state.smartEnabled || !isGhost(this) || !state.orbPredictionEnabled) {
                 return;
             }
             if (state.usedOrbs.contains(ringObject)) {
@@ -8005,8 +8153,11 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             if (!state.smartEnabled || !isGhost(playerObject) || !effectObject) {
                 return false;
             }
-
-            if (typeinfo_cast<RingObject*>(effectObject)) {
+            auto* ringObject = typeinfo_cast<RingObject*>(effectObject);
+            if (ringObject && !state.orbPredictionEnabled && !typeinfo_cast<DashRingObject*>(ringObject)) {
+                return false;
+            }
+            if (ringObject) {
                 if (state.usedOrbs.contains(effectObject)) {
                     return false;
                 }
@@ -8033,7 +8184,11 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             relevantObjects.reserve(gameObjectCount);
         }
 
-        uint64_t keptTypesMask = state.smartEnabled ? (COLLIDING_OBJECT_TYPES | INTERACTABLE_OBJECT_TYPES) : COLLIDING_OBJECT_TYPES;
+        uint64_t interactableMask = state.orbPredictionEnabled
+            ? INTERACTABLE_OBJECT_TYPES
+            : (INTERACTABLE_OBJECT_TYPES & ~JUMP_ORB_OBJECT_TYPES);
+        uint64_t keptTypesMask = state.smartEnabled ? (COLLIDING_OBJECT_TYPES | interactableMask) : COLLIDING_OBJECT_TYPES;
+        state.collisionObjectsScanned += static_cast<std::uint64_t>(std::max(0, gameObjectCount));
         bool hasRectangle = false;
         CCRect ghostRectangle;
         auto& objectList = *gameObjects;
@@ -8062,6 +8217,7 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
                     }
                 }
                 relevantObjects.push_back(gameObject);
+                ++state.collisionObjectsKept;
                 continue;
             }
             if (!state.smartEnabled) {
@@ -8096,11 +8252,33 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     }
 
     void handleButton(bool isDown, int buttonId, bool isFirstPlayer) {
+        afterflowdiag::ActiveScope diagnosticScope("GJBaseGameLayer::handleButton");
         if (!state.isSimulating && buttonId == 1 && !state.isInjecting) {
+            state.simulationRunCount = 0;
+            state.simulatedTickCount = 0;
+            state.collisionObjectsScanned = 0;
+            state.collisionObjectsKept = 0;
+            state.orbTouchCount = 0;
+            state.orbProbeOverflow = false;
+            auto clickStart = std::chrono::steady_clock::now();
             auto* player1 = this->m_player1;
             recordRealInput(isDown, player1);
             bool isHeld = intercept(this, isDown, isFirstPlayer);
             sweepGhostLayer();
+            if (g_performanceDiagnosticsEnabled && !g_disableLogs) {
+                auto* activeLayer = GameManager::get()->m_playLayer;
+                auto mode = predictionModeFor(player1, activeLayer && activeLayer->m_gameState.m_isDualMode ? activeLayer->m_player2 : nullptr);
+                double elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - clickStart).count();
+                afterflowdiag::recordf("INPUT_RESULT down=%d mode=%s percent=%d elapsedMs=%.3f budgetMs=%.2f stage=%d stageTicks=%d/%d horizon=%d maxDelay=%d base=%d saved=%d outcome=%s sims=%d simTicks=%ld collisionScanned=%llu collisionKept=%llu orbPrediction=%d orbContacts=%llu probeCandidates=%zu probeOverflow=%d budgetAbort=%d queued=%zu",
+                    isDown ? 1 : 0, predictionModeName(mode), activeLayer ? activeLayer->getCurrentPercent() : 0,
+                    elapsedMs, state.budgetMilliseconds, state.stageIndex, state.ticksAllModes, state.ticksWaveMode,
+                    state.lastInputHorizonTicks, state.lastInputMaxDelayTicks, state.lastInputBaseTicks,
+                    state.lastInputSavedTicks, state.lastInputOutcome, state.simulationRunCount, state.simulatedTickCount,
+                    static_cast<unsigned long long>(state.collisionObjectsScanned),
+                    static_cast<unsigned long long>(state.collisionObjectsKept), state.orbPredictionEnabled ? 1 : 0,
+                    static_cast<unsigned long long>(state.orbTouchCount), state.probeOrbCandidates.size(),
+                    state.orbProbeOverflow ? 1 : 0, state.predictionBudgetExceeded ? 1 : 0, state.queuedInputs.size());
+            }
             if (isHeld) {
                 return;
             }
@@ -8109,9 +8287,15 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     }
 
     void playerTouchedRing(PlayerObject* playerObject, RingObject* ringObject) {
+        afterflowdiag::ActiveScope diagnosticScope("GJBaseGameLayer::playerTouchedRing");
         if (state.isSimulating) {
             if (!state.smartEnabled || !isGhost(playerObject)) {
                 return;
+            }
+            bool isDashRing = typeinfo_cast<DashRingObject*>(ringObject) != nullptr;
+            ++state.orbTouchCount;
+            if (!state.orbPredictionEnabled && !isDashRing) {
+                return; // skip optional jump-orb work, but keep contact-triggered dash rings
             }
             snapshotObject(ringObject);
             if (state.orbPredictionEnabled) {
@@ -8133,7 +8317,7 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
                             break;
                         }
                     }
-                    if (!isKnown) {
+                    if (!isKnown && state.probeOrbCandidates.size() < MAX_PROBE_ORB_CANDIDATES) {
                         float touchDistanceSquared = orbDistanceSq(playerObject, ringObject);
                         ProbeOrb newProbe;
                         newProbe.ringObject = ringObject;
@@ -8143,6 +8327,9 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
                         newProbe.touchSampleTick = state.simulationTick;
                         newProbe.closeSampleTick = state.simulationTick;
                         state.probeOrbCandidates.push_back(newProbe);
+                    }
+                    else if (!isKnown) {
+                        state.orbProbeOverflow = true;
                     }
                 }
             }

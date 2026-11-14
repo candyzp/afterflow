@@ -12,7 +12,7 @@ if (APPLE)
 endif()
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
-project(Afterflow VERSION 2.4.5)
+project(Afterflow VERSION 2.4.6)
 
 # Add all source files inside src (recursively)
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
