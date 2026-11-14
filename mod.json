@@ -8,7 +8,7 @@
   },
   "id": "afterflow.prsevend",
   "name": "Afterflow",
-  "version": "2.4.5",
+  "version": "2.4.6",
   "developer": "prsevend",
   "description": "a predictive input cheat that fixes your early clicks and makes them accurate, with customizable UI colors and a polished control panel.",
   "tags": [
@@ -173,6 +173,18 @@
         "android",
         "ios"
       ]
+    },
+    "performance-diagnostics": {
+      "type": "bool",
+      "name": "performance diagnostics",
+      "description": "Record per-input timing, prediction outcomes, ghost simulation counts, collision-object volume, orb contacts, budget cutoffs and long frame gaps to afterflow-performance.log in the Afterflow save folder. The crash detector is installed even when this is off.",
+      "default": false
+    },
+    "disable-logs": {
+      "type": "bool",
+      "name": "disable diagnostic logs",
+      "description": "Disable the activity log and detailed performance recording to reduce logging overhead. Prediction stats and the save counter still work. The fatal-signal detector remains installed and can write basic crash metadata.",
+      "default": false
     }
   }
 }
