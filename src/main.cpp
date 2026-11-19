@@ -498,8 +498,8 @@ namespace {
         CCLayer* ghostRenderLayer = nullptr;
         unsigned ghostLayerBaseIndex = 0;
         bool performanceMode = false;
-        double userBudgetMilliseconds = 6.0;
-        bool automaticBudget = true;
+        double userBudgetMilliseconds = 8.0;
+        bool automaticBudget = false;
         int keyStates[6] = { 0, 0, 0, 0, 0, 0 };
         std::unordered_set<GameObject*> simulationDisabledObjects;
 
@@ -2478,7 +2478,7 @@ finally {
     void readSettings() {
         state.smartEnabled = true;
         state.budgetMilliseconds = 8.0;
-        state.automaticBudget = true;
+        state.automaticBudget = false;
         state.practiceModeOnly = false;
         state.groundHorizonTicks = 130;
         state.waveHorizonTicks = 65;
@@ -6385,10 +6385,6 @@ finally {
         int stopAtTick, SimEnd* simulationEnd) {
         afterflowdiag::ActiveScope diagnosticScope("simulate");
         *simulationEnd = SimEnd::Ok;
-        if (state.isInputDecisionActive && state.predictionBudgetExceeded) {
-            *simulationEnd = SimEnd::StopSearch;
-            return 0;
-        }
         if (!state.ghostPlayer1 || !player1) {
             return horizonTicks;
         }
@@ -6447,14 +6443,9 @@ finally {
         int currentTick = 0;
         bool hasDied = false;
         bool isSafe = false;
-        bool budgetExceeded = false;
         if (state.isInputDecisionActive) ++state.simulationRunCount;
 
         for (; currentTick < totalTicks; ++currentTick) {
-            if (state.isInputDecisionActive && (currentTick & 3) == 0 && clickMs() >= state.budgetMilliseconds) {
-                budgetExceeded = true;
-                break;
-            }
             if (state.isInputDecisionActive) ++state.simulatedTickCount;
             state.simulationTick = currentTick;
 
@@ -6575,11 +6566,7 @@ finally {
             ++groundedTicks;
         }
 
-        if (budgetExceeded) {
-            state.predictionBudgetExceeded = true;
-            *simulationEnd = SimEnd::StopSearch;
-        }
-        else if ((hasDied || state.hasGhostHitPortal) && currentTick < delayTicks) {
+        if ((hasDied || state.hasGhostHitPortal) && currentTick < delayTicks) {
             *simulationEnd = SimEnd::StopSearch;
         }
         restoreObjects();
@@ -6590,21 +6577,17 @@ finally {
         if (g_performanceDiagnosticsEnabled && !g_disableLogs) {
             afterflowdiag::recordf("SIM_END delay=%d down=%d horizon=%d stopAt=%d survived=%d died=%d safe=%d portal=%d steps=%d budgetAbort=%d orbOn=%d orbTouchTick=%d orbUseTick=%d orbCandidates=%zu collisionScanned=%llu collisionKept=%llu",
                 delayTicks, isDown ? 1 : 0, horizonTicks, stopAtTick, survivedTicks, hasDied ? 1 : 0, isSafe ? 1 : 0,
-                state.hasGhostHitPortal ? 1 : 0, currentTick, budgetExceeded ? 1 : 0, trackOrbPrediction ? 1 : 0,
+                state.hasGhostHitPortal ? 1 : 0, currentTick, 0, trackOrbPrediction ? 1 : 0,
                 state.firstOrbTouchTick, state.orbUseTick, state.probeOrbCandidates.size(),
                 static_cast<unsigned long long>(state.collisionObjectsScanned),
                 static_cast<unsigned long long>(state.collisionObjectsKept));
         }
         state.isSimulating = false;
-        return budgetExceeded ? 0 : (isSafe ? horizonTicks : survivedTicks);
+        return isSafe ? horizonTicks : survivedTicks;
     }
 
     int simulateOrbs(PlayLayer* gameLayer, PlayerObject* player1, PlayerObject* player2, bool isDual, int delayTicks, bool isDown, int horizonTicks, int releaseAfterTicks,
         int stopAtTick, SimEnd* simulationEnd) {
-        if (state.isInputDecisionActive && state.predictionBudgetExceeded) {
-            *simulationEnd = SimEnd::StopSearch;
-            return 0;
-        }
         state.orbClickEnabled = state.assumeOrbHits && state.orbPredictionEnabled;
         state.hasTouchedOrb = false;
         if (!state.orbPredictionEnabled) {
@@ -6613,7 +6596,7 @@ finally {
             return simulate(gameLayer, player1, player2, isDual, delayTicks, isDown, horizonTicks, releaseAfterTicks, stopAtTick, simulationEnd);
         }
         int isFirst = simulate(gameLayer, player1, player2, isDual, delayTicks, isDown, horizonTicks, releaseAfterTicks, stopAtTick, simulationEnd);
-        if (*simulationEnd == SimEnd::StopSearch || !state.tryBothOrbCandidates || !state.smartEnabled || !state.hasTouchedOrb || isFirst >= stopAtTick) {
+        if (!state.tryBothOrbCandidates || !state.smartEnabled || !state.hasTouchedOrb || isFirst >= stopAtTick) {
             return isFirst;
         }
         SimEnd firstSimulationEnd = *simulationEnd;
@@ -6661,7 +6644,6 @@ finally {
     }
 
     int alignOrb(PlayLayer* gameLayer, PlayerObject* player1, PlayerObject* player2, bool isDual, int horizonTicks, int releaseAfterTicks, int learnedDelay, int* landingTick) {
-        if (state.isInputDecisionActive && state.predictionBudgetExceeded) return 0;
         int searchWindowTicks = st(std::clamp(state.orbWindowTicks, 1, 64));
         int foundTick = 0;
         SimEnd simulationEnd;
@@ -6884,15 +6866,14 @@ finally {
         return baseResult;
     }
 
-    bool sameCrash(int candidateDelay, int candidateResult, int baseDelay, int& sameCrashStreak,
-        int maximumSameCrashTries = SAME_CRASH_TRY_COUNT) {
+    bool sameCrash(int candidateDelay, int candidateResult, int baseDelay, int& sameCrashStreak) {
         if (sameCrashStreak >= 0 && std::abs(candidateDelay + candidateResult - baseDelay) <= 1) {
             ++sameCrashStreak;
         }
         else {
             sameCrashStreak = -1;
         }
-        if (sameCrashStreak >= maximumSameCrashTries) {
+        if (sameCrashStreak >= SAME_CRASH_TRY_COUNT) {
             isCrashFixed = true;
             return true;
         }
@@ -7055,10 +7036,6 @@ finally {
         int targetTick = needsFullSearch ? horizonTicks : std::min(horizonTicks, baseDelay + st(12));
         debugBestDelay = 0;
         debugBestResult = -1;
-        // Full cube / ball searches must reach later candidate delays: the first few
-        // candidates can hit the same spike at nearly the same world-time, without proving
-        // that every later jump timing is unsafe. The existing click budget bounds this scan.
-        int maximumSameCrashTries = needsFullSearch ? maxDelayTicks + 1 : SAME_CRASH_TRY_COUNT;
         int sameCrashStreak = 0;
         int waveBestDelay = 0;
         int waveBestResult = baseDelay;
@@ -7087,7 +7064,7 @@ finally {
                     }
                 }
             }
-            else if (candidateResult < targetTick && sameCrash(candidateDelay, candidateResult, baseDelay, sameCrashStreak, maximumSameCrashTries)) {
+            else if (candidateResult < targetTick && sameCrash(candidateDelay, candidateResult, baseDelay, sameCrashStreak)) {
                 break;
             }
             else if (candidateResult >= targetTick) {
@@ -7327,15 +7304,6 @@ finally {
                                  : simulateOrbs(playLayer, player1, player2, isDual, 0, isDown, horizonTicks, releaseAfterTicks, horizonTicks, &simulationEnd);
 
         state.lastInputBaseTicks = baseDelay;
-        if (state.predictionBudgetExceeded || simulationEnd == SimEnd::StopSearch) {
-            state.lastInputOutcome = state.predictionBudgetExceeded ? "budget-exhausted" : "base-simulation-stopped";
-            double elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - clickStartTime).count();
-            recordLevelPrediction(isDown, predictionMode,
-                state.predictionBudgetExceeded ? PredictionOutcome::BudgetExceeded : PredictionOutcome::NoSave,
-                playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
-            state.hasAppliedInput = isDown;
-            return false;
-        }
         std::string tickTagText = midTickFraction > 0.f ? fmt::format(" @{:.2f}", midTickFraction) : std::string();
         if (baseDelay >= horizonTicks) {
             state.lastInputOutcome = "safe";
@@ -7349,13 +7317,9 @@ finally {
         }
 
         bool isGroundPress = isDown && !hasFlyer && !hasAnyRobot && !hasSpider && !hasWave;
-        // Landing before a spike does not make the collision unrelated to this jump:
-        // shifting the input can change the jump's landing position and clear the hazard.
-        // Search the configured delay window instead of passing this input through.
-        bool isLateGroundCollision = isGroundPress && state.lateCrashTicks > 0 &&
-            baseDelay >= st(state.lateCrashTicks) && state.hasBaseTouchedDown;
-        if (isLateGroundCollision && state.explainEnabled) {
-            say("late landing collision at t{}: searching through +{}t", baseDelay, maxDelayTicks);
+        if (isGroundPress && state.lateCrashTicks > 0 && baseDelay >= st(state.lateCrashTicks) && state.hasBaseTouchedDown) {
+            state.hasAppliedInput = isDown;
+            return false;
         }
 
         int landingTick = 0;
@@ -7399,14 +7363,6 @@ finally {
             state.retapTick = -1;
             state.orbClickEnabled = false;
             simulate(playLayer, player1, player2, isDual, savedTick, isDown, verificationHorizonTicks, -1, verificationHorizonTicks, &verificationEnd);
-            if (state.predictionBudgetExceeded) {
-                state.lastInputOutcome = "budget-exhausted-verification";
-                double elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - clickStartTime).count();
-                recordLevelPrediction(isDown, predictionMode, PredictionOutcome::BudgetExceeded,
-                    playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
-                state.hasAppliedInput = isDown;
-                return false;
-            }
             if (state.pressOrbRingObject != state.intendedOrbObject) {
                 state.lastInputOutcome = "orb-rejected";
                 double elapsedMs = std::chrono::duration<double, std::milli>(
