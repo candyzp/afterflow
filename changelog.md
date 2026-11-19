@@ -1,3 +1,8 @@
+# v2.4.7
+
+- **ground-jump spike saves**: full cube / ball searches no longer stop after four repeated same-time collision results, allowing later configured delays (including 200–240 tick stages) to be checked while the existing per-click budget remains enforced.
+- **landing-spike recovery**: remove the late-crash shortcut that passed ground jumps through after landing before a later hazard; a shifted jump is now searched rather than assumed unsaveable.
+
 # v2.4.6
 
 - **orb isolation**: when Orb Prediction is off, optional jump rings are removed from ghost collision candidates and their ring-touch/ring-jump path is skipped. Pads, portals and contact-triggered dash rings remain active.

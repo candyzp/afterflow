@@ -6884,14 +6884,15 @@ finally {
         return baseResult;
     }
 
-    bool sameCrash(int candidateDelay, int candidateResult, int baseDelay, int& sameCrashStreak) {
+    bool sameCrash(int candidateDelay, int candidateResult, int baseDelay, int& sameCrashStreak,
+        int maximumSameCrashTries = SAME_CRASH_TRY_COUNT) {
         if (sameCrashStreak >= 0 && std::abs(candidateDelay + candidateResult - baseDelay) <= 1) {
             ++sameCrashStreak;
         }
         else {
             sameCrashStreak = -1;
         }
-        if (sameCrashStreak >= SAME_CRASH_TRY_COUNT) {
+        if (sameCrashStreak >= maximumSameCrashTries) {
             isCrashFixed = true;
             return true;
         }
@@ -7054,6 +7055,10 @@ finally {
         int targetTick = needsFullSearch ? horizonTicks : std::min(horizonTicks, baseDelay + st(12));
         debugBestDelay = 0;
         debugBestResult = -1;
+        // Full cube / ball searches must reach later candidate delays: the first few
+        // candidates can hit the same spike at nearly the same world-time, without proving
+        // that every later jump timing is unsafe. The existing click budget bounds this scan.
+        int maximumSameCrashTries = needsFullSearch ? maxDelayTicks + 1 : SAME_CRASH_TRY_COUNT;
         int sameCrashStreak = 0;
         int waveBestDelay = 0;
         int waveBestResult = baseDelay;
@@ -7082,7 +7087,7 @@ finally {
                     }
                 }
             }
-            else if (candidateResult < targetTick && sameCrash(candidateDelay, candidateResult, baseDelay, sameCrashStreak)) {
+            else if (candidateResult < targetTick && sameCrash(candidateDelay, candidateResult, baseDelay, sameCrashStreak, maximumSameCrashTries)) {
                 break;
             }
             else if (candidateResult >= targetTick) {
@@ -7344,15 +7349,13 @@ finally {
         }
 
         bool isGroundPress = isDown && !hasFlyer && !hasAnyRobot && !hasSpider && !hasWave;
-        if (isGroundPress && state.lateCrashTicks > 0 && baseDelay >= st(state.lateCrashTicks) && state.hasBaseTouchedDown) {
-            state.lastInputOutcome = "late-crash-skip";
-            double elapsedMs = std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - clickStartTime
-            ).count();
-            recordLevelPrediction(isDown, predictionMode, PredictionOutcome::LateCrash,
-                playLayer->getCurrentPercent(), baseDelay, 0, maxDelayTicks, elapsedMs);
-            state.hasAppliedInput = isDown;
-            return false;
+        // Landing before a spike does not make the collision unrelated to this jump:
+        // shifting the input can change the jump's landing position and clear the hazard.
+        // Search the configured delay window instead of passing this input through.
+        bool isLateGroundCollision = isGroundPress && state.lateCrashTicks > 0 &&
+            baseDelay >= st(state.lateCrashTicks) && state.hasBaseTouchedDown;
+        if (isLateGroundCollision && state.explainEnabled) {
+            say("late landing collision at t{}: searching through +{}t", baseDelay, maxDelayTicks);
         }
 
         int landingTick = 0;
