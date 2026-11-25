@@ -1,3 +1,7 @@
+# v2.4.11
+
+- **Geode 6 build fix**: rename the local dash-ring flag so it no longer shadows the shared `isDashRing` helper. The helper returns `bool`, and all prediction/orb behavior remains unchanged.
+
 # v2.4.10
 
 - **iOS 2.2091 linker fix**: detect `DashRingObject` through its runtime typeinfo name on iOS, avoiding a reference to the unavailable static RTTI symbol.

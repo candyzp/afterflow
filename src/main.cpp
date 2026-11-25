@@ -8276,9 +8276,9 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             if (!state.smartEnabled || !isGhost(playerObject)) {
                 return;
             }
-            bool isDashRing = isDashRing(ringObject) != nullptr;
+            bool dashRing = isDashRing(ringObject);
             ++state.orbTouchCount;
-            if (!state.orbPredictionEnabled && !isDashRing) {
+            if (!state.orbPredictionEnabled && !dashRing) {
                 return; // skip optional jump-orb work, but keep contact-triggered dash rings
             }
             snapshotObject(ringObject);
