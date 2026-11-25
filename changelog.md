@@ -1,3 +1,9 @@
+# v2.4.10
+
+- **iOS 2.2091 linker fix**: detect `DashRingObject` through its runtime typeinfo name on iOS, avoiding a reference to the unavailable static RTTI symbol.
+- Keep the regular `typeinfo_cast` path on Windows, macOS, and Android.
+- No changes to prediction, orb timing, or ghost simulation behavior.
+
 # v2.4.9
 
 - **Geode 6 build fixes**: update WebRequest timeout to `asp::Duration`, handle the fallible filesystem path conversion, and use the 2.2091 `PlayLayer::init` signature.

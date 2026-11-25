@@ -27,6 +27,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -62,6 +63,19 @@ namespace {
     constexpr char const* KEYBIND_STAGE = "keybind-stage";
     constexpr char const* KEYBIND_TERMINAL = "keybind-terminal";
     constexpr char const* KEYBIND_INTRO_DONE = "keybind-intro-done";
+
+    // DashRingObject has no exported RTTI symbol in the iOS 2.2091 bindings.
+    // Read the live object's Itanium typeinfo instead of referencing typeid.
+    bool isDashRing(RingObject* ringObject) {
+        if (!ringObject) {
+            return false;
+        }
+#if defined(GEODE_IS_IOS)
+        return std::strcmp(geode::cast::getRuntimeTypeName(ringObject), "14DashRingObject") == 0;
+#else
+        return typeinfo_cast<DashRingObject*> (ringObject) != nullptr;
+#endif
+    }
 
     constexpr size_t RECENT_LOG_CAPACITY = 64;
     std::mutex g_recentLogMutex;
@@ -6692,7 +6706,7 @@ finally {
                     continue;
                 }
 
-                if (typeinfo_cast<DashRingObject*>(candidateProbe.ringObject)) {
+                if (isDashRing(candidateProbe.ringObject)) {
                     float orbRadius = orbSpriteRadius(candidateProbe.ringObject);
                     if (candidateProbe.closeDistanceSquared > orbRadius * orbRadius * 2.25f) {
                         continue;
@@ -8124,7 +8138,7 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
                 return false;
             }
             auto* ringObject = typeinfo_cast<RingObject*>(effectObject);
-            if (ringObject && !state.orbPredictionEnabled && !typeinfo_cast<DashRingObject*>(ringObject)) {
+            if (ringObject && !state.orbPredictionEnabled && !isDashRing(ringObject)) {
                 return false;
             }
             if (ringObject) {
@@ -8262,7 +8276,7 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             if (!state.smartEnabled || !isGhost(playerObject)) {
                 return;
             }
-            bool isDashRing = typeinfo_cast<DashRingObject*>(ringObject) != nullptr;
+            bool isDashRing = isDashRing(ringObject) != nullptr;
             ++state.orbTouchCount;
             if (!state.orbPredictionEnabled && !isDashRing) {
                 return; // skip optional jump-orb work, but keep contact-triggered dash rings
@@ -8307,7 +8321,7 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
         GJBaseGameLayer::playerTouchedRing(playerObject, ringObject);
 
         if (state.isSimulating && state.orbClickEnabled) {
-            if (typeinfo_cast<DashRingObject*>(ringObject)) {
+            if (isDashRing(ringObject)) {
                 return;
             }
             bool isFirst = playerObject == state.ghostPlayer1;
