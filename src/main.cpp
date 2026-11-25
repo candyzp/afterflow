@@ -1954,7 +1954,7 @@ finally {
 
         auto request = web::WebRequest();
         // a stuck connection must not leave the overlay up forever
-        request.timeout(std::chrono::seconds(120));
+        request.timeout(asp::Duration::fromSecs(120));
         request.onProgress([](web::WebProgress const& progress) {
             size_t downloaded = progress.downloaded();
             size_t total = progress.downloadTotal();
@@ -6259,8 +6259,7 @@ finally {
         ghostPlayer->m_affectedByForces = realPlayer->m_affectedByForces;
         ghostPlayer->m_stateBoostX = realPlayer->m_stateBoostX;
         ghostPlayer->m_stateBoostY = realPlayer->m_stateBoostY;
-        ghostPlayer->m_stateNoStickX = realPlayer->m_stateNoStickX;
-        ghostPlayer->m_stateNoStickY = realPlayer->m_stateNoStickY;
+        // The 2.2091 PlayerObject bindings no longer expose the old no-stick state fields.
         ghostPlayer->m_stateHitHead = realPlayer->m_stateHitHead;
         ghostPlayer->m_stateFlipGravity = realPlayer->m_stateFlipGravity;
         ghostPlayer->m_stateNoAutoJump = realPlayer->m_stateNoAutoJump;
@@ -7492,7 +7491,12 @@ finally {
 $on_mod(Loaded) {
     g_performanceDiagnosticsEnabled = Mod::get()->getSettingValue<bool>("performance-diagnostics");
     g_disableLogs = Mod::get()->getSettingValue<bool>("disable-logs");
-    afterflowdiag::install(Mod::get()->getSaveDir().toStdPath() / "afterflow-performance.log");
+    auto diagnosticsPath = Mod::get()->getSaveDir().toStdPath();
+    if (diagnosticsPath) {
+        afterflowdiag::install(diagnosticsPath.unwrap() / "afterflow-performance.log");
+    } else {
+        log::warn("afterflow: unable to resolve diagnostics path: {}", diagnosticsPath.unwrapErr());
+    }
     afterflowdiag::setRecordingEnabled(g_performanceDiagnosticsEnabled && !g_disableLogs);
 
     log::info("afterflow: load start ({})", hostOSName());
@@ -7621,8 +7625,8 @@ class $modify(BufPlayLayer, PlayLayer) {
         forgetPress();
     }
 
-    bool init(GJGameLevel* gameLevel, bool useReplayData, bool skipObjectCreation) {
-        if (!PlayLayer::init(gameLevel, useReplayData, skipObjectCreation)) {
+    bool init(GJGameLevel* gameLevel, bool skipObjectCreation) {
+        if (!PlayLayer::init(gameLevel, skipObjectCreation)) {
             return false;
         }
         dropGhosts();
@@ -7990,9 +7994,11 @@ class $modify(BufPlayerObject, PlayerObject) {
         if (!ghostEffect()) PlayerObject::fadeOutStreak2(fadeDuration);
     }
 
+#if !defined(GEODE_IS_IOS)
     void playDynamicSpiderRun() {
         if (!ghostEffect()) PlayerObject::playDynamicSpiderRun();
     }
+#endif
 
     void animatePlatformerJump(float jumpScale) {
         if (!ghostEffect()) PlayerObject::animatePlatformerJump(jumpScale);
@@ -8048,9 +8054,11 @@ class $modify(BufPlayerObject, PlayerObject) {
         PlayerObject::playerDestroyed(suppressEffects);
     }
 
+#if !defined(GEODE_IS_IOS)
     void playCompleteEffect(bool suppressEffects, bool isInstant) {
         if (!ghostEffect()) PlayerObject::playCompleteEffect(suppressEffects, isInstant);
     }
+#endif
 
     void ringJump(RingObject* ringObject, bool skipCollisionCheck) {
         if (state.isSimulating) {

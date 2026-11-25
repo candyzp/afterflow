@@ -1,3 +1,10 @@
+# v2.4.9
+
+- **Geode 6 build fixes**: update WebRequest timeout to `asp::Duration`, handle the fallible filesystem path conversion, and use the 2.2091 `PlayLayer::init` signature.
+- **2.2091 player state**: stop copying the two removed no-stick fields that are no longer present in the 2.2091 PlayerObject bindings.
+- **iOS compatibility**: leave `playDynamicSpiderRun` and `playCompleteEffect` visual hooks native on iOS because 2.2091 does not provide hook addresses for them.
+- Keep predictive input, ghost simulation, and gameplay logic otherwise unchanged.
+
 # v2.4.8
 
 - **Geometry Dash 2.2091 / Geode 6.0.0**: update the mod's supported game and loader versions on Windows, macOS, Android, and iOS.
