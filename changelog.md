@@ -1,3 +1,10 @@
+# v2.4.8
+
+- **Geometry Dash 2.2091 / Geode 6.0.0**: update the mod's supported game and loader versions on Windows, macOS, Android, and iOS.
+- **Geode 6 migration**: use `std::vector` for updated GD bindings, the renamed `TextInput::unfocus()` API, and the new `asp::fs::Path` save-directory conversion.
+- **iOS bindings**: pin the build matrix to the current Geode 2.2091 bindings.
+- Preserve the existing prediction, ghost simulation, and input-delay behavior.
+
 # v2.4.7
 
 - **ground-jump spike saves**: full cube / ball searches no longer stop after four repeated same-time collision results, allowing later configured delays (including 200–240 tick stages) to be checked while the existing per-click budget remains enforced.

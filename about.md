@@ -4,7 +4,7 @@ by prsevend
 
 a predictive input cheat that fixes your early clicks and makes them accurate.
 
-built for **geometry dash 2.2** (gd 2.2081, geode 5.11.2) on windows, macos, android and ios. **f6** cycles stages anywhere. **f9** opens a custom in-game control panel with stage controls, a live log, copy log and a terminal shortcut. on mobile, a draggable **AF** button opens the same panel. both desktop keys are geode keybinds, so you can rebind them in mod settings or the keybinds popup.
+built for **geometry dash 2.2091** (geode 6.0.0) on windows, macos, android and ios. **f6** cycles stages anywhere. **f9** opens a custom in-game control panel with stage controls, a live log, copy log and a terminal shortcut. on mobile, a draggable **AF** button opens the same panel. both desktop keys are geode keybinds, so you can rebind them in mod settings or the keybinds popup.
 
 ## what it does
 
@@ -97,12 +97,11 @@ requires `kitty` on linux/proton. native windows uses powershell and needs no se
 
 ## build
 
-you need geode sdk 5.11.2, cmake 3.29+ and the 2.2081 bindings. on windows, use clang-cl (the visual studio clang toolset or llvm) and ninja for large translation units. if `build/` was previously configured with msvc, delete it first so cmake picks up clang-cl.
+you need geode sdk 6.0.0, geode cli 4.0.0 or newer, cmake 3.29+ and the 2.2091 bindings. on windows, use clang-cl (the visual studio clang toolset or llvm) and ninja for large translation units. if `build/` was previously configured with msvc, delete it first so cmake picks up clang-cl.
 
 ```sh
 # linux cross compiling a windows mod
 export GEODE_SDK=/path/to/geode-sdk
-export GEODE_BINDINGS_REPO_PATH=/path/to/geode-bindings   # only needed for the 2.2081 binding fixes
 geode build -p windows
 
 # windows (clang-cl + ninja)

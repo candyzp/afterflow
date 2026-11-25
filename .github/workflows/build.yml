@@ -28,7 +28,7 @@ jobs:
           - name: iOS
             os: macos-26-intel
             target: iOS
-            bindings-ref: 1605f500d053f8de122bf5c7dc6d17c24866e02e
+            bindings-ref: 975068022f6164c483907274909ad2f700c6d646
             configure-args: -DSKIP_BUILDING_CODEGEN=OFF
 
     name: ${{ matrix.config.name }}
